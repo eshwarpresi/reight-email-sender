@@ -2,10 +2,10 @@
   "name": "freight-email-sender-backend",
   "version": "1.0.0",
   "description": "Bulk Email Sender for Freight Forwarding Company",
-  "main": "src/server.js",
+  "main": "api/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node api/index.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
     "migrate": "node src/scripts/migrate.js"
@@ -43,19 +43,5 @@
     "smtp"
   ],
   "author": "",
-  "license": "MIT",
-  "vercel": {
-    "builds": [
-      {
-        "src": "api/index.js",
-        "use": "@vercel/node"
-      }
-    ],
-    "routes": [
-      {
-        "src": "/api/(.*)",
-        "dest": "/api/index.js"
-      }
-    ]
-  }
+  "license": "MIT"
 }

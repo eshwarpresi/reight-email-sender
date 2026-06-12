@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
@@ -31,15 +34,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'mui-vendor': ['@mui/material', '@mui/icons-material', '@mui/x-data-grid'],
-          'chart-vendor': ['recharts', 'react-quill'],
+          'mui-vendor': ['@mui/material', '@mui/icons-material'],
         },
       },
     },
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-router-dom', '@mui/material', '@mui/icons-material'],
   },
 });

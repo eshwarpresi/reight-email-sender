@@ -135,11 +135,11 @@ async function startServer() {
         await getDatabase();
         logger.info('Database connected successfully');
         
-        // Start server
-        server = app.listen(PORT, () => {
+        // Start server - Bind to 0.0.0.0 for Render compatibility
+        server = app.listen(PORT, '0.0.0.0', () => {
             logger.info(`Server running on port ${PORT}`);
             logger.info(`Environment: ${process.env.NODE_ENV}`);
-            logger.info(`API available at http://localhost:${PORT}/api`);
+            logger.info(`API available at http://0.0.0.0:${PORT}/api`);
         });
         
         // Graceful shutdown

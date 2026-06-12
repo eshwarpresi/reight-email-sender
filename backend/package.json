@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Bulk Email Sender for Freight Forwarding Company",
   "main": "src/server.js",
+  "type": "module",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
@@ -24,6 +25,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",
     "papaparse": "^5.5.3",
+    "serverless-http": "^4.0.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.6",
     "uuid": "^9.0.1",
@@ -41,5 +43,19 @@
     "smtp"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "vercel": {
+    "builds": [
+      {
+        "src": "api/index.js",
+        "use": "@vercel/node"
+      }
+    ],
+    "routes": [
+      {
+        "src": "/api/(.*)",
+        "dest": "/api/index.js"
+      }
+    ]
+  }
 }

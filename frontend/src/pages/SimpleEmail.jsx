@@ -33,19 +33,17 @@ export default function SimpleEmail() {
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
     const [fixedEmails, setFixedEmails] = useState([]);
+    const [queueId, setQueueId] = useState(null);
+    const [isQueued, setIsQueued] = useState(false);
 
-    // Advanced email fixing function - NO SKIPPING, ALL EMAILS WILL BE SENT
+    // Advanced email fixing function
     const fixAndExtractEmails = (emailString) => {
         if (!emailString) return [];
         
-        // First, split by common separators: new line, comma, semicolon, space
         let allEmails = [];
-        
-        // Split by new lines first
         const lines = emailString.split(/\n/);
         
         for (const line of lines) {
-            // Check if line contains multiple emails separated by ; or ,
             if (line.includes(';') || line.includes(',')) {
                 const separated = line.split(/[;,]/);
                 for (const sep of separated) {
@@ -60,31 +58,13 @@ export default function SimpleEmail() {
         
         for (const email of allEmails) {
             if (!email) continue;
-            
             let extracted = email;
-            
-            // Remove HTML tags and brackets
             extracted = extracted.replace(/[<>]/g, '');
-            
-            // Extract email from "Name <email@domain.com>" or "Name email@domain.com" format
             const emailMatch = extracted.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
             if (emailMatch) {
                 extracted = emailMatch[0];
             }
-            
-            // Remove any remaining special characters
             extracted = extracted.replace(/[\[\](){}]/g, '');
-            
-            // Fix common domain issues
-            if (extracted.includes('@') && !extracted.includes('.com') && !extracted.includes('.cn') && !extracted.includes('.net') && !extracted.includes('.org')) {
-                const atIndex = extracted.indexOf('@');
-                const domain = extracted.substring(atIndex + 1);
-                if (domain && !domain.includes('.')) {
-                    extracted = extracted + '.com';
-                }
-            }
-            
-            // Validate email format
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             if (emailRegex.test(extracted)) {
                 extractedEmails.push(extracted.toLowerCase());
@@ -93,7 +73,6 @@ export default function SimpleEmail() {
             }
         }
         
-        // Remove duplicates while preserving order
         const uniqueEmails = [];
         const seen = new Set();
         for (const email of extractedEmails) {
@@ -104,40 +83,6 @@ export default function SimpleEmail() {
         }
         
         return uniqueEmails;
-    };
-
-    // Send email with retry logic (including CC/BCC)
-    const sendEmailWithRetry = async (email, attempt = 1) => {
-        try {
-            const formDataToSend = new FormData();
-            formDataToSend.append('from_email', formData.from_email);
-            formDataToSend.append('from_password', formData.from_password);
-            formDataToSend.append('to_email', email);
-            formDataToSend.append('cc_emails', formData.cc_emails);
-            formDataToSend.append('bcc_emails', formData.bcc_emails);
-            formDataToSend.append('subject', formData.subject);
-            formDataToSend.append('content', formData.content);
-            if (attachment) {
-                formDataToSend.append('attachment', attachment);
-            }
-
-            await api.post('/send-single-email', formDataToSend, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-                timeout: 30000
-            });
-            
-            return { success: true, email, attempt };
-        } catch (error) {
-            if (attempt < 3) {
-                await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
-                return sendEmailWithRetry(email, attempt + 1);
-            }
-            return { 
-                success: false, 
-                email, 
-                error: error.response?.data?.message || error.message || 'Failed after 3 attempts'
-            };
-        }
     };
 
     const handleSend = async () => {
@@ -162,58 +107,55 @@ export default function SimpleEmail() {
             return;
         }
 
-        // Extract and fix all emails
         const allEmails = fixAndExtractEmails(formData.to_emails);
         
         if (allEmails.length === 0) {
-            toast.error('No email addresses found. Please check your input.');
+            toast.error('No valid email addresses found');
             return;
-        }
-
-        // Show CC/BCC info
-        if (formData.cc_emails) {
-            toast.info(`CC will be sent to: ${formData.cc_emails}`);
-        }
-        if (formData.bcc_emails) {
-            toast.info(`BCC will be sent to: ${formData.bcc_emails}`);
         }
 
         setFixedEmails(allEmails);
         setLoading(true);
         setProgress(0);
         setResults([]);
+        setIsQueued(true);
 
-        let sent = 0;
-        let failed = 0;
-        const failedEmails = [];
+        // Prepare recipients for batch send
+        const recipients = allEmails.map(email => ({ email, name: '' }));
 
-        for (let i = 0; i < allEmails.length; i++) {
-            const email = allEmails[i];
+        try {
+            const response = await api.post('/send-batch-emails', {
+                from_email: formData.from_email,
+                from_password: formData.from_password,
+                recipients: recipients,
+                cc_emails: formData.cc_emails,
+                bcc_emails: formData.bcc_emails,
+                subject: formData.subject,
+                content: formData.content
+            }, {
+                timeout: 300000 // 5 minute timeout for large batches
+            });
+
+            const data = response.data;
             
-            if (i > 0) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-            
-            const result = await sendEmailWithRetry(email);
-            
-            if (result.success) {
-                sent++;
-                setResults(prev => [...prev, { email: result.email, status: 'sent', attempt: result.attempt }]);
+            if (data.success) {
+                setResults(data.data.details.map(r => ({
+                    email: r.email,
+                    status: r.success ? 'sent' : 'failed',
+                    error: r.error
+                })));
+                
+                toast.success(`✅ Sent: ${data.data.sent}, Failed: ${data.data.failed}, Invalid: ${data.data.invalid}`);
+                setProgress(100);
             } else {
-                failed++;
-                failedEmails.push({ email: result.email, error: result.error });
-                setResults(prev => [...prev, { email: result.email, status: 'failed', error: result.error, attempt: result.attempt }]);
+                toast.error('Failed to send emails: ' + data.message);
             }
-            
-            setProgress(((i + 1) / allEmails.length) * 100);
-        }
-
-        setLoading(false);
-        
-        if (failed === 0) {
-            toast.success(`✅ Success! All ${sent} emails sent successfully!`);
-        } else {
-            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed.`);
+        } catch (error) {
+            console.error('Send error:', error);
+            toast.error('Failed to send emails. Please try again.');
+        } finally {
+            setLoading(false);
+            setIsQueued(false);
         }
     };
 
@@ -234,8 +176,10 @@ export default function SimpleEmail() {
         'link', 'image', 'video'
     ];
 
+    // Load default CC/BCC settings
     useEffect(() => {
         loadSavedSettings();
+        loadDefaultCcBcc();
     }, []);
 
     const loadSavedSettings = async () => {
@@ -252,6 +196,21 @@ export default function SimpleEmail() {
             }
         } catch (error) {
             console.error('Failed to load SMTP settings:', error);
+        }
+    };
+
+    const loadDefaultCcBcc = async () => {
+        try {
+            const response = await api.get('/auth/default-cc-bcc');
+            if (response.data.data) {
+                setFormData(prev => ({
+                    ...prev,
+                    cc_emails: response.data.data.default_cc || '',
+                    bcc_emails: response.data.data.default_bcc || '',
+                }));
+            }
+        } catch (error) {
+            console.error('Failed to load default CC/BCC:', error);
         }
     };
 
@@ -282,11 +241,11 @@ export default function SimpleEmail() {
                     )}
 
                     <Alert severity="info">
-                        <strong>📧 Email Tips:</strong>
+                        <strong>📧 Bulk Email Tips:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
                             <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
                             <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
-                            <li>2 second delay between emails to avoid rate limiting</li>
+                            <li>Handles 200+ emails smoothly with optimized batch processing</li>
                             <li>Auto-fixes invalid email formats</li>
                         </ul>
                     </Alert>
@@ -378,13 +337,13 @@ export default function SimpleEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary">
-                                Sending {fixedEmails.length} emails... {Math.round(progress)}%
+                                Processing {fixedEmails.length} emails... {Math.round(progress)}%
                             </Typography>
                         </Box>
                     )}
 
                     <Button fullWidth variant="contained" size="large" startIcon={<SendIcon />} onClick={handleSend} disabled={loading}>
-                        {loading ? 'Sending...' : 'Send to All Recipients'}
+                        {loading ? `Sending ${fixedEmails.length} emails...` : `Send to ${fixedEmails.length} Recipients`}
                     </Button>
 
                     {results.length > 0 && (
@@ -392,11 +351,16 @@ export default function SimpleEmail() {
                             <Typography variant="subtitle2">
                                 Results: {results.filter(r => r.status === 'sent').length} sent, {results.filter(r => r.status === 'failed').length} failed
                             </Typography>
-                            {results.map((r, i) => (
+                            {results.slice(0, 20).map((r, i) => (
                                 <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
                                     {r.email}: {r.status} {r.error && `- ${r.error}`}
                                 </Typography>
                             ))}
+                            {results.length > 20 && (
+                                <Typography variant="body2" color="textSecondary">
+                                    ... and {results.length - 20} more results
+                                </Typography>
+                            )}
                         </Paper>
                     )}
                 </Stack>

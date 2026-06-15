@@ -50,36 +50,24 @@ export default function PersonalizedEmail() {
     const [showCredentials, setShowCredentials] = useState(false);
     const [sendResults, setSendResults] = useState([]);
 
-    // Advanced email fixing - NO SKIPPING, extract email from any format
+    // Advanced email fixing
     const fixEmail = (email) => {
         if (!email) return null;
         
         let cleaned = email.toString().trim();
-        
-        // Remove HTML tags and brackets
         cleaned = cleaned.replace(/[<>]/g, '');
-        
-        // Extract email from "Name <email@domain.com>" or "Name email@domain.com" format
         const emailMatch = cleaned.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
         if (emailMatch) {
             cleaned = emailMatch[0];
         }
-        
-        // Remove any remaining special characters
         cleaned = cleaned.replace(/[\[\](){}]/g, '');
-        
-        // Fix common domain issues
         if (cleaned.includes('@') && !cleaned.includes('.') && cleaned.split('@')[1].length > 0) {
             cleaned = cleaned + '.com';
         }
-        
-        // Convert to lowercase
-        cleaned = cleaned.toLowerCase();
-        
-        return cleaned;
+        return cleaned.toLowerCase();
     };
 
-    // Fix all recipients when loaded - NO SKIPPING
+    // Fix all recipients when loaded
     useEffect(() => {
         const fixed = [];
         const originalCount = recipients.length;
@@ -108,27 +96,10 @@ export default function PersonalizedEmail() {
         }
     }, [recipients]);
 
-    // Quill modules configuration
-    const quillModules = {
-        toolbar: [
-            [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
-            ['bold', 'italic', 'underline', 'strike'],
-            [{ 'color': [] }, { 'background': [] }],
-            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-            ['link', 'image', 'video'],
-            ['clean']
-        ],
-    };
-
-    const quillFormats = [
-        'header', 'bold', 'italic', 'underline', 'strike',
-        'color', 'background', 'list', 'bullet',
-        'link', 'image', 'video'
-    ];
-
-    // Load saved SMTP settings
+    // Load default CC/BCC settings
     useEffect(() => {
         loadSavedSettings();
+        loadDefaultCcBcc();
     }, []);
 
     const loadSavedSettings = async () => {
@@ -142,6 +113,18 @@ export default function PersonalizedEmail() {
             }
         } catch (error) {
             console.error('Failed to load SMTP settings:', error);
+        }
+    };
+
+    const loadDefaultCcBcc = async () => {
+        try {
+            const response = await api.get('/auth/default-cc-bcc');
+            if (response.data.data) {
+                setCcEmails(response.data.data.default_cc || '');
+                setBccEmails(response.data.data.default_bcc || '');
+            }
+        } catch (error) {
+            console.error('Failed to load default CC/BCC:', error);
         }
     };
 
@@ -218,46 +201,10 @@ export default function PersonalizedEmail() {
         const previews = fixedRecipients.slice(0, 5).map(r => ({
             email: r.email,
             name: r.name,
-            originalEmail: r.originalEmail,
             message: template.replace(/{NAME}/g, r.name || 'Valued Customer'),
         }));
         setPreviewData(previews);
         setPreviewOpen(true);
-    };
-
-    // Send email with retry logic (including CC/BCC)
-    const sendEmailWithRetry = async (recipient, index, attempt = 1) => {
-        // Add delay between emails
-        if (index > 0) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-        
-        const personalizedMessage = template.replace(/{NAME}/g, recipient.name || 'Valued Customer');
-        
-        try {
-            const formData = new FormData();
-            formData.append('from_email', fromEmail);
-            formData.append('from_password', fromPassword);
-            formData.append('to_email', recipient.email);
-            formData.append('cc_emails', ccEmails);
-            formData.append('bcc_emails', bccEmails);
-            formData.append('subject', subject);
-            formData.append('content', personalizedMessage);
-
-            await api.post('/send-single-email', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-                timeout: 30000
-            });
-            
-            return { success: true, email: recipient.email, name: recipient.name, attempt };
-        } catch (error) {
-            if (attempt < 3) {
-                await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
-                return sendEmailWithRetry(recipient, index, attempt + 1);
-            }
-            let errorMsg = error.response?.data?.message || error.message || 'Failed';
-            return { success: false, email: recipient.email, name: recipient.name, error: errorMsg, attempt };
-        }
     };
 
     const handleSend = async () => {
@@ -282,46 +229,73 @@ export default function PersonalizedEmail() {
             return;
         }
 
-        // Show CC/BCC info
-        if (ccEmails) {
-            toast.info(`CC will be sent to: ${ccEmails}`);
-        }
-        if (bccEmails) {
-            toast.info(`BCC will be sent to: ${bccEmails}`);
-        }
-
         setLoading(true);
         setProgress(0);
         setSendResults([]);
 
         let sent = 0;
         let failed = 0;
+        const batchSize = 5; // Send 5 emails at a time
+        const delayBetweenBatches = 2000; // 2 seconds between batches
 
-        for (let i = 0; i < fixedRecipients.length; i++) {
-            const recipient = fixedRecipients[i];
+        // Process recipients in batches
+        for (let i = 0; i < fixedRecipients.length; i += batchSize) {
+            const batch = fixedRecipients.slice(i, i + batchSize);
             
-            const result = await sendEmailWithRetry(recipient, i);
+            // Process batch concurrently
+            const batchPromises = batch.map(async (recipient, batchIndex) => {
+                const personalizedMessage = template.replace(/{NAME}/g, recipient.name || 'Valued Customer');
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('from_email', fromEmail);
+                    formData.append('from_password', fromPassword);
+                    formData.append('to_email', recipient.email);
+                    formData.append('cc_emails', ccEmails);
+                    formData.append('bcc_emails', bccEmails);
+                    formData.append('subject', subject);
+                    formData.append('content', personalizedMessage);
+
+                    await api.post('/send-single-email', formData, {
+                        headers: { 'Content-Type': 'multipart/form-data' },
+                        timeout: 60000 // 60 second timeout for individual emails
+                    });
+                    
+                    return { success: true, email: recipient.email, name: recipient.name };
+                } catch (error) {
+                    let errorMsg = error.response?.data?.message || error.message || 'Failed';
+                    return { success: false, email: recipient.email, name: recipient.name, error: errorMsg };
+                }
+            });
             
-            if (result.success) {
-                sent++;
-                setSendResults(prev => [...prev, { 
-                    email: result.email, 
-                    name: result.name, 
-                    status: 'sent',
-                    attempt: result.attempt 
-                }]);
-            } else {
-                failed++;
-                setSendResults(prev => [...prev, { 
-                    email: result.email, 
-                    name: result.name, 
-                    status: 'failed', 
-                    error: result.error,
-                    attempt: result.attempt
-                }]);
+            const batchResults = await Promise.all(batchPromises);
+            
+            for (const result of batchResults) {
+                if (result.success) {
+                    sent++;
+                    setSendResults(prev => [...prev, { 
+                        email: result.email, 
+                        name: result.name, 
+                        status: 'sent'
+                    }]);
+                } else {
+                    failed++;
+                    setSendResults(prev => [...prev, { 
+                        email: result.email, 
+                        name: result.name, 
+                        status: 'failed', 
+                        error: result.error
+                    }]);
+                }
             }
             
-            setProgress(((i + 1) / fixedRecipients.length) * 100);
+            // Update progress
+            setProgress(Math.min(((i + batchSize) / fixedRecipients.length) * 100, 100));
+            
+            // Delay between batches (except after last batch)
+            if (i + batchSize < fixedRecipients.length) {
+                await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+            }
         }
 
         setLoading(false);
@@ -329,9 +303,26 @@ export default function PersonalizedEmail() {
         if (failed === 0) {
             toast.success(`✅ Success! All ${sent} personalized emails sent successfully!`);
         } else {
-            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed.`);
+            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. Check results below.`);
         }
     };
+
+    const quillModules = {
+        toolbar: [
+            [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+            ['bold', 'italic', 'underline', 'strike'],
+            [{ 'color': [] }, { 'background': [] }],
+            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+            ['link', 'image', 'video'],
+            ['clean']
+        ],
+    };
+
+    const quillFormats = [
+        'header', 'bold', 'italic', 'underline', 'strike',
+        'color', 'background', 'list', 'bullet',
+        'link', 'image', 'video'
+    ];
 
     return (
         <Box sx={{ maxWidth: 1200, mx: 'auto', mt: 4 }}>
@@ -340,18 +331,14 @@ export default function PersonalizedEmail() {
                     Personalized Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each email is personalized with recipient's name - With CC/BCC support
+                    Each email is personalized with recipient's name - Optimized for 200+ emails
                 </Typography>
 
                 <Stack spacing={3}>
                     {hasSavedSettings && (
                         <Alert severity="success">
                             ✓ Your Gmail credentials are loaded from Settings. 
-                            <Button 
-                                size="small" 
-                                onClick={() => setShowCredentials(!showCredentials)}
-                                sx={{ ml: 2 }}
-                            >
+                            <Button size="small" onClick={() => setShowCredentials(!showCredentials)} sx={{ ml: 2 }}>
                                 {showCredentials ? 'Hide' : 'Show'} Credentials
                             </Button>
                         </Alert>
@@ -364,13 +351,14 @@ export default function PersonalizedEmail() {
                     )}
 
                     <Alert severity="info">
-                        <strong>📧 Email Features:</strong>
+                        <strong>📧 Optimized Bulk Email Features:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
-                            <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
-                            <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
-                            <li>Upload Excel/CSV file with columns: <strong>Name, Email</strong></li>
-                            <li>Use <strong>{'{NAME}'}</strong> as placeholder for personalization</li>
-                            <li>2 second delay between emails - Auto retry on failure</li>
+                            <li>✅ Handles 200+ emails smoothly with batch processing</li>
+                            <li>✅ Sends 5 emails at a time for optimal performance</li>
+                            <li>✅ 2 second delay between batches to respect Gmail limits</li>
+                            <li>✅ <strong>CC:</strong> Carbon Copy - visible to all recipients</li>
+                            <li>✅ <strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
+                            <li>✅ Use <strong>{'{NAME}'}</strong> for personalization</li>
                         </ul>
                     </Alert>
 
@@ -432,8 +420,6 @@ export default function PersonalizedEmail() {
                         </Typography>
                         <Typography variant="caption" color="textSecondary" gutterBottom display="block">
                             💡 Use {'{NAME}'} as placeholder - Auto replaced with each recipient's name
-                            <br />
-                            📸 Copy-paste images directly from clipboard!
                         </Typography>
                         <ReactQuill
                             theme="snow"
@@ -448,35 +434,17 @@ export default function PersonalizedEmail() {
 
                     <Box>
                         <Typography variant="subtitle1" gutterBottom>
-                            Recipients List ({fixedRecipients.length} valid recipients)
+                            Recipients List ({fixedRecipients.length} recipients)
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                            <Button
-                                variant="outlined"
-                                component="label"
-                                startIcon={<UploadIcon />}
-                            >
+                            <Button variant="outlined" component="label" startIcon={<UploadIcon />}>
                                 Upload Excel/CSV
-                                <input
-                                    type="file"
-                                    hidden
-                                    accept=".xlsx,.xls,.csv"
-                                    onChange={handleFileUpload}
-                                />
+                                <input type="file" hidden accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
                             </Button>
-                            <Button
-                                variant="outlined"
-                                startIcon={<AddIcon />}
-                                onClick={handleAddManually}
-                            >
+                            <Button variant="outlined" startIcon={<AddIcon />} onClick={handleAddManually}>
                                 Add Manually
                             </Button>
-                            <Button
-                                variant="outlined"
-                                startIcon={<PreviewIcon />}
-                                onClick={handlePreview}
-                                disabled={fixedRecipients.length === 0 || !template}
-                            >
+                            <Button variant="outlined" startIcon={<PreviewIcon />} onClick={handlePreview} disabled={fixedRecipients.length === 0 || !template}>
                                 Preview First 5
                             </Button>
                         </Box>
@@ -487,7 +455,7 @@ export default function PersonalizedEmail() {
                                     <TableHead>
                                         <TableRow>
                                             <TableCell>Name</TableCell>
-                                            <TableCell>Email (Fixed)</TableCell>
+                                            <TableCell>Email</TableCell>
                                             <TableCell>Preview</TableCell>
                                             <TableCell>Action</TableCell>
                                         </TableRow>
@@ -498,7 +466,7 @@ export default function PersonalizedEmail() {
                                                 <TableCell>{r.name}</TableCell>
                                                 <TableCell>{r.email}</TableCell>
                                                 <TableCell sx={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {template.replace(/{NAME}/g, r.name || 'Customer').replace(/<[^>]*>/g, '').substring(0, 40)}...
+                                                    {template.replace(/{NAME}/g, r.name || 'Customer').replace(/<[^>]*>/g, '').substring(0, 50)}...
                                                 </TableCell>
                                                 <TableCell>
                                                     <IconButton size="small" onClick={() => {
@@ -526,7 +494,7 @@ export default function PersonalizedEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending... {Math.round(progress)}% - 2 sec delay between emails
+                                Sending {fixedRecipients.length} emails... {Math.round(progress)}% (5 emails per batch)
                             </Typography>
                         </Box>
                     )}
@@ -548,17 +516,21 @@ export default function PersonalizedEmail() {
                             <Typography variant="subtitle2" gutterBottom>
                                 Results: {sendResults.filter(r => r.status === 'sent').length} sent, {sendResults.filter(r => r.status === 'failed').length} failed
                             </Typography>
-                            {sendResults.map((r, i) => (
+                            {sendResults.slice(0, 20).map((r, i) => (
                                 <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
-                                    {r.name}: {r.email} - {r.status} {r.error && `(${r.error})`} {r.attempt > 1 && `[retried ${r.attempt}x]`}
+                                    {r.name}: {r.email} - {r.status} {r.error && `(${r.error})`}
                                 </Typography>
                             ))}
+                            {sendResults.length > 20 && (
+                                <Typography variant="body2" color="textSecondary">
+                                    ... and {sendResults.length - 20} more results
+                                </Typography>
+                            )}
                         </Paper>
                     )}
                 </Stack>
             </Paper>
 
-            {/* Preview Dialog */}
             <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} maxWidth="md" fullWidth>
                 <DialogTitle>Email Preview (First 5 recipients)</DialogTitle>
                 <DialogContent>

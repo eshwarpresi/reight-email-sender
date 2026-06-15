@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Email Queue
+-- Email Queue (UPDATED with CC/BCC columns)
 CREATE TABLE IF NOT EXISTS email_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER,
@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS email_queue (
     content TEXT NOT NULL,
     content_html TEXT,
     attachments TEXT,
+    cc_emails TEXT,
+    bcc_emails TEXT,
     status VARCHAR(50) DEFAULT 'pending',
     retry_count INTEGER DEFAULT 0,
     error_message TEXT,

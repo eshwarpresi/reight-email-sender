@@ -32,6 +32,9 @@ export async function getDatabase() {
     // Initialize database schema
     await initializeDatabase(dbInstance);
     
+    // Run migrations for existing database
+    await runMigrations(dbInstance);
+    
     return dbInstance;
 }
 
@@ -47,11 +50,39 @@ async function initializeDatabase(db) {
             await db.exec(statement);
         } catch (error) {
             console.error('Error executing schema statement:', error);
-            throw error;
+            // Don't throw error for duplicate column errors
+            if (!error.message.includes('duplicate column')) {
+                throw error;
+            }
         }
     }
     
     console.log('Database initialized successfully');
+}
+
+async function runMigrations(db) {
+    try {
+        // Check if cc_emails column exists in email_queue table
+        const tableInfo = await db.all("PRAGMA table_info(email_queue)");
+        
+        const hasCcEmails = tableInfo.some(col => col.name === 'cc_emails');
+        const hasBccEmails = tableInfo.some(col => col.name === 'bcc_emails');
+        
+        if (!hasCcEmails) {
+            console.log('Adding cc_emails column to email_queue...');
+            await db.exec('ALTER TABLE email_queue ADD COLUMN cc_emails TEXT');
+        }
+        
+        if (!hasBccEmails) {
+            console.log('Adding bcc_emails column to email_queue...');
+            await db.exec('ALTER TABLE email_queue ADD COLUMN bcc_emails TEXT');
+        }
+        
+        console.log('Database migrations completed successfully');
+    } catch (error) {
+        console.error('Migration error:', error.message);
+        // Don't throw - migrations are optional
+    }
 }
 
 export async function closeDatabase() {

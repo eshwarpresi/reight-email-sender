@@ -37,7 +37,7 @@ const cleanMultipleEmails = (emailsString) => {
     return cleanedEmails;
 };
 
-// Send single email using queue system (NO TIMEOUT)
+// Send single email using queue system
 export const sendSingleEmail = async (req, res) => {
     try {
         let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
@@ -52,7 +52,7 @@ export const sendSingleEmail = async (req, res) => {
             });
         }
 
-        // Add to queue system instead of sending immediately
+        // Add to queue system
         const queueItem = await queueService.addDirectToQueue(
             [cleanedEmail],
             from_email,
@@ -79,7 +79,7 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// Batch send with queue system (NO TIMEOUT, HANDLES 200+ EMAILS)
+// Batch send - NOW USING QUEUE SYSTEM (NO TIMEOUT)
 export const sendBatchEmails = async (req, res) => {
     try {
         const { from_email, from_password, recipients, cc_emails, bcc_emails, subject, content } = req.body;
@@ -108,72 +108,29 @@ export const sendBatchEmails = async (req, res) => {
             });
         }
 
-        // Add all emails to queue system (NO TIMEOUT)
-        const queuePromises = validRecipients.map(async (recipient) => {
+        // Add ALL emails to queue system (NOT sending directly!)
+        const queueItems = [];
+        for (const recipient of validRecipients) {
             const personalizedContent = content.replace(/{NAME}/g, recipient.name || 'Valued Customer');
             
-            // Create a transporter and send
-            const transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 587,
-                secure: false,
-                auth: {
-                    user: from_email,
-                    pass: from_password,
-                },
-                pool: true,
-                maxConnections: 3,
-                rateDelta: 3000,
-                rateLimit: true,
-            });
-
-            const mailOptions = {
-                from: from_email,
-                to: recipient.email,
-                subject: subject,
-                html: personalizedContent,
-                text: personalizedContent.replace(/<[^>]*>/g, ''),
-            };
-            
-            if (ccList.length > 0) mailOptions.cc = ccList.join(', ');
-            if (bccList.length > 0) mailOptions.bcc = bccList.join(', ');
-
-            try {
-                await transporter.sendMail(mailOptions);
-                transporter.close();
-                return { success: true, email: recipient.email, name: recipient.name };
-            } catch (error) {
-                transporter.close();
-                return { success: false, email: recipient.email, name: recipient.name, error: error.message };
-            }
-        });
-
-        // Execute with concurrency limit (5 at a time)
-        const concurrencyLimit = 5;
-        const results = [];
-        
-        for (let i = 0; i < queuePromises.length; i += concurrencyLimit) {
-            const batch = queuePromises.slice(i, i + concurrencyLimit);
-            const batchResults = await Promise.all(batch);
-            results.push(...batchResults);
-            
-            // Delay between batches
-            if (i + concurrencyLimit < queuePromises.length) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
+            const result = await queueService.addDirectToQueue(
+                [recipient.email],
+                from_email,
+                from_password,
+                subject,
+                personalizedContent,
+                ccList.join(', '),
+                bccList.join(', ')
+            );
+            queueItems.push(...result);
         }
-        
-        const sentCount = results.filter(r => r.success).length;
-        const failedCount = results.filter(r => !r.success).length;
         
         res.json({
             success: true,
-            message: `Batch queued: ${sentCount} sent, ${failedCount} failed, ${invalidRecipients.length} invalid`,
+            message: `${queueItems.length} emails queued for sending`,
             data: {
-                sent: sentCount,
-                failed: failedCount,
+                queued: queueItems.length,
                 invalid: invalidRecipients.length,
-                details: results,
                 invalidEmails: invalidRecipients
             }
         });

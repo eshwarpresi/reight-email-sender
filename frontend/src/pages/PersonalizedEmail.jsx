@@ -42,6 +42,8 @@ export default function PersonalizedEmail() {
     const [subject, setSubject] = useState('');
     const [fromEmail, setFromEmail] = useState('');
     const [fromPassword, setFromPassword] = useState('');
+    const [ccEmails, setCcEmails] = useState('');
+    const [bccEmails, setBccEmails] = useState('');
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewData, setPreviewData] = useState([]);
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
@@ -68,7 +70,6 @@ export default function PersonalizedEmail() {
         
         // Fix common domain issues
         if (cleaned.includes('@') && !cleaned.includes('.') && cleaned.split('@')[1].length > 0) {
-            // Add .com if domain has no dot
             cleaned = cleaned + '.com';
         }
         
@@ -92,7 +93,6 @@ export default function PersonalizedEmail() {
                     originalEmail: recipient.email
                 });
             } else if (recipient.email && recipient.email.includes('@')) {
-                // Even if not perfect, try to send
                 fixed.push({
                     name: recipient.name || 'Customer',
                     email: recipient.email.toLowerCase(),
@@ -225,7 +225,7 @@ export default function PersonalizedEmail() {
         setPreviewOpen(true);
     };
 
-    // Send email with retry logic
+    // Send email with retry logic (including CC/BCC)
     const sendEmailWithRetry = async (recipient, index, attempt = 1) => {
         // Add delay between emails
         if (index > 0) {
@@ -239,6 +239,8 @@ export default function PersonalizedEmail() {
             formData.append('from_email', fromEmail);
             formData.append('from_password', fromPassword);
             formData.append('to_email', recipient.email);
+            formData.append('cc_emails', ccEmails);
+            formData.append('bcc_emails', bccEmails);
             formData.append('subject', subject);
             formData.append('content', personalizedMessage);
 
@@ -250,7 +252,6 @@ export default function PersonalizedEmail() {
             return { success: true, email: recipient.email, name: recipient.name, attempt };
         } catch (error) {
             if (attempt < 3) {
-                // Retry up to 3 times
                 await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
                 return sendEmailWithRetry(recipient, index, attempt + 1);
             }
@@ -281,6 +282,14 @@ export default function PersonalizedEmail() {
             return;
         }
 
+        // Show CC/BCC info
+        if (ccEmails) {
+            toast.info(`CC will be sent to: ${ccEmails}`);
+        }
+        if (bccEmails) {
+            toast.info(`BCC will be sent to: ${bccEmails}`);
+        }
+
         setLoading(true);
         setProgress(0);
         setSendResults([]);
@@ -288,7 +297,6 @@ export default function PersonalizedEmail() {
         let sent = 0;
         let failed = 0;
 
-        // Send all emails (NO SKIPPING)
         for (let i = 0; i < fixedRecipients.length; i++) {
             const recipient = fixedRecipients[i];
             
@@ -321,7 +329,7 @@ export default function PersonalizedEmail() {
         if (failed === 0) {
             toast.success(`✅ Success! All ${sent} personalized emails sent successfully!`);
         } else {
-            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. You can retry failed emails.`);
+            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed.`);
         }
     };
 
@@ -332,7 +340,7 @@ export default function PersonalizedEmail() {
                     Personalized Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each email is personalized with recipient's name - NO EMAIL WILL BE SKIPPED
+                    Each email is personalized with recipient's name - With CC/BCC support
                 </Typography>
 
                 <Stack spacing={3}>
@@ -351,19 +359,18 @@ export default function PersonalizedEmail() {
 
                     {!hasSavedSettings && (
                         <Alert severity="info">
-                            <strong>Save your Gmail credentials once in Settings page!</strong> 
-                            Go to Settings → Gmail SMTP Settings.
+                            <strong>Save your Gmail credentials once in Settings page!</strong>
                         </Alert>
                     )}
 
                     <Alert severity="info">
-                        <strong>How it works:</strong>
+                        <strong>📧 Email Features:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
+                            <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
+                            <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
                             <li>Upload Excel/CSV file with columns: <strong>Name, Email</strong></li>
-                            <li>Write your message template using <strong>{'{NAME}'}</strong> as placeholder</li>
-                            <li>Auto-fixes invalid email formats - <strong>NO EMAILS ARE SKIPPED</strong></li>
-                            <li>2 second delay between emails to avoid rate limiting</li>
-                            <li>Automatic retry (up to 3 times) for failed emails</li>
+                            <li>Use <strong>{'{NAME}'}</strong> as placeholder for personalization</li>
+                            <li>2 second delay between emails - Auto retry on failure</li>
                         </ul>
                     </Alert>
 
@@ -375,7 +382,6 @@ export default function PersonalizedEmail() {
                         value={fromEmail}
                         onChange={(e) => setFromEmail(e.target.value)}
                         required
-                        helperText={hasSavedSettings ? "✓ Loaded from saved settings" : "Enter once or save in Settings"}
                         disabled={hasSavedSettings && !showCredentials}
                     />
 
@@ -387,8 +393,29 @@ export default function PersonalizedEmail() {
                         value={fromPassword}
                         onChange={(e) => setFromPassword(e.target.value)}
                         required
-                        helperText="Generate from Google Account → App Passwords"
                         disabled={hasSavedSettings && !showCredentials}
+                    />
+
+                    <TextField
+                        fullWidth
+                        label="CC (Carbon Copy) - Optional"
+                        multiline
+                        rows={2}
+                        placeholder="cc1@domain.com, cc2@domain.com"
+                        value={ccEmails}
+                        onChange={(e) => setCcEmails(e.target.value)}
+                        helperText="These recipients will receive a copy (visible to all)"
+                    />
+
+                    <TextField
+                        fullWidth
+                        label="BCC (Blind Carbon Copy) - Optional"
+                        multiline
+                        rows={2}
+                        placeholder="bcc1@domain.com, bcc2@domain.com"
+                        value={bccEmails}
+                        onChange={(e) => setBccEmails(e.target.value)}
+                        helperText="Hidden copies - recipients won't see each other"
                     />
 
                     <TextField
@@ -499,7 +526,7 @@ export default function PersonalizedEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending... {Math.round(progress)}% ({Math.round(progress / 100 * fixedRecipients.length)} of {fixedRecipients.length}) - 2 sec delay between emails
+                                Sending... {Math.round(progress)}% - 2 sec delay between emails
                             </Typography>
                         </Box>
                     )}

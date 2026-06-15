@@ -24,6 +24,8 @@ export default function SimpleEmail() {
         from_email: '',
         from_password: '',
         to_emails: '',
+        cc_emails: '',
+        bcc_emails: '',
         subject: '',
         content: '',
     });
@@ -31,10 +33,11 @@ export default function SimpleEmail() {
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
     const [fixedEmails, setFixedEmails] = useState([]);
-    const [originalInvalidCount, setOriginalInvalidCount] = useState(0);
 
     // Advanced email fixing function - NO SKIPPING, ALL EMAILS WILL BE SENT
     const fixAndExtractEmails = (emailString) => {
+        if (!emailString) return [];
+        
         // First, split by common separators: new line, comma, semicolon, space
         let allEmails = [];
         
@@ -74,7 +77,6 @@ export default function SimpleEmail() {
             
             // Fix common domain issues
             if (extracted.includes('@') && !extracted.includes('.com') && !extracted.includes('.cn') && !extracted.includes('.net') && !extracted.includes('.org')) {
-                // Try to add .com if missing
                 const atIndex = extracted.indexOf('@');
                 const domain = extracted.substring(atIndex + 1);
                 if (domain && !domain.includes('.')) {
@@ -87,7 +89,6 @@ export default function SimpleEmail() {
             if (emailRegex.test(extracted)) {
                 extractedEmails.push(extracted.toLowerCase());
             } else if (extracted.includes('@')) {
-                // Still try to send even if format is unusual
                 extractedEmails.push(extracted.toLowerCase());
             }
         }
@@ -105,13 +106,15 @@ export default function SimpleEmail() {
         return uniqueEmails;
     };
 
-    // Send email with retry logic
+    // Send email with retry logic (including CC/BCC)
     const sendEmailWithRetry = async (email, attempt = 1) => {
         try {
             const formDataToSend = new FormData();
             formDataToSend.append('from_email', formData.from_email);
             formDataToSend.append('from_password', formData.from_password);
             formDataToSend.append('to_email', email);
+            formDataToSend.append('cc_emails', formData.cc_emails);
+            formDataToSend.append('bcc_emails', formData.bcc_emails);
             formDataToSend.append('subject', formData.subject);
             formDataToSend.append('content', formData.content);
             if (attachment) {
@@ -126,7 +129,6 @@ export default function SimpleEmail() {
             return { success: true, email, attempt };
         } catch (error) {
             if (attempt < 3) {
-                // Retry up to 3 times with increasing delay
                 await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
                 return sendEmailWithRetry(email, attempt + 1);
             }
@@ -160,12 +162,20 @@ export default function SimpleEmail() {
             return;
         }
 
-        // Extract and fix all emails (NO SKIPPING)
+        // Extract and fix all emails
         const allEmails = fixAndExtractEmails(formData.to_emails);
         
         if (allEmails.length === 0) {
             toast.error('No email addresses found. Please check your input.');
             return;
+        }
+
+        // Show CC/BCC info
+        if (formData.cc_emails) {
+            toast.info(`CC will be sent to: ${formData.cc_emails}`);
+        }
+        if (formData.bcc_emails) {
+            toast.info(`BCC will be sent to: ${formData.bcc_emails}`);
         }
 
         setFixedEmails(allEmails);
@@ -177,11 +187,9 @@ export default function SimpleEmail() {
         let failed = 0;
         const failedEmails = [];
 
-        // Send emails one by one with delay and retry
         for (let i = 0; i < allEmails.length; i++) {
             const email = allEmails[i];
             
-            // Add delay between emails (2 seconds)
             if (i > 0) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
@@ -197,22 +205,18 @@ export default function SimpleEmail() {
                 setResults(prev => [...prev, { email: result.email, status: 'failed', error: result.error, attempt: result.attempt }]);
             }
             
-            // Update progress
             setProgress(((i + 1) / allEmails.length) * 100);
         }
 
         setLoading(false);
         
-        // Show summary
         if (failed === 0) {
             toast.success(`✅ Success! All ${sent} emails sent successfully!`);
         } else {
-            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. Retry failed emails from History page.`);
-            console.log('Failed emails:', failedEmails);
+            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed.`);
         }
     };
 
-    // Quill modules configuration
     const quillModules = {
         toolbar: [
             [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
@@ -230,7 +234,6 @@ export default function SimpleEmail() {
         'link', 'image', 'video'
     ];
 
-    // Load saved SMTP settings
     useEffect(() => {
         loadSavedSettings();
     }, []);
@@ -259,18 +262,14 @@ export default function SimpleEmail() {
                     Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each recipient receives a separate email - No BCC, completely private
+                    Each recipient receives a separate email - With CC/BCC support
                 </Typography>
 
                 <Stack spacing={3}>
                     {hasSavedSettings && (
                         <Alert severity="success">
                             ✓ Your Gmail credentials are loaded from Settings. 
-                            <Button 
-                                size="small" 
-                                onClick={() => setShowCredentials(!showCredentials)}
-                                sx={{ ml: 2 }}
-                            >
+                            <Button size="small" onClick={() => setShowCredentials(!showCredentials)} sx={{ ml: 2 }}>
                                 {showCredentials ? 'Hide' : 'Show'} Credentials
                             </Button>
                         </Alert>
@@ -278,18 +277,17 @@ export default function SimpleEmail() {
 
                     {!hasSavedSettings && (
                         <Alert severity="info">
-                            <strong>Save your Gmail credentials once in Settings page!</strong> 
-                            Go to Settings → Gmail SMTP Settings to save your email and app password permanently.
+                            <strong>Save your Gmail credentials once in Settings page!</strong>
                         </Alert>
                     )}
 
-                    <Alert severity="warning">
-                        <strong>Email Tips:</strong>
+                    <Alert severity="info">
+                        <strong>📧 Email Tips:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
-                            <li>Gmail allows ~500 emails per day</li>
+                            <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
+                            <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
                             <li>2 second delay between emails to avoid rate limiting</li>
-                            <li>Auto-fixes invalid email formats (no emails are skipped)</li>
-                            <li>Each email retries up to 3 times if failed</li>
+                            <li>Auto-fixes invalid email formats</li>
                         </ul>
                     </Alert>
 
@@ -301,7 +299,6 @@ export default function SimpleEmail() {
                         value={formData.from_email}
                         onChange={(e) => setFormData({ ...formData, from_email: e.target.value })}
                         required
-                        helperText={hasSavedSettings ? "✓ Loaded from saved settings" : "Enter once or save in Settings"}
                         disabled={hasSavedSettings && !showCredentials}
                     />
 
@@ -313,20 +310,40 @@ export default function SimpleEmail() {
                         value={formData.from_password}
                         onChange={(e) => setFormData({ ...formData, from_password: e.target.value })}
                         required
-                        helperText="Generate from Google Account → App Passwords"
                         disabled={hasSavedSettings && !showCredentials}
                     />
 
                     <TextField
                         fullWidth
-                        label="Recipient Emails"
+                        label="Recipient Emails (To)"
                         multiline
-                        rows={6}
-                        placeholder="Paste email addresses (supports formats like:&#10;email@domain.com&#10;Name &lt;email@domain.com&gt;&#10;email1@domain.com; email2@domain.com&#10;email@domain.com, another@domain.com"
+                        rows={4}
+                        placeholder="Paste email addresses&#10;email1@domain.com&#10;email2@domain.com"
                         value={formData.to_emails}
                         onChange={(e) => setFormData({ ...formData, to_emails: e.target.value })}
                         required
-                        helperText="Auto-fixes invalid formats - every email will be sent!"
+                    />
+
+                    <TextField
+                        fullWidth
+                        label="CC (Carbon Copy) - Optional"
+                        multiline
+                        rows={2}
+                        placeholder="cc1@domain.com, cc2@domain.com"
+                        value={formData.cc_emails}
+                        onChange={(e) => setFormData({ ...formData, cc_emails: e.target.value })}
+                        helperText="These recipients will be visible to everyone"
+                    />
+
+                    <TextField
+                        fullWidth
+                        label="BCC (Blind Carbon Copy) - Optional"
+                        multiline
+                        rows={2}
+                        placeholder="bcc1@domain.com, bcc2@domain.com"
+                        value={formData.bcc_emails}
+                        onChange={(e) => setFormData({ ...formData, bcc_emails: e.target.value })}
+                        helperText="Hidden from other recipients"
                     />
 
                     <TextField
@@ -341,9 +358,6 @@ export default function SimpleEmail() {
                         <Typography variant="subtitle1" gutterBottom>
                             Message (Rich Text - Supports Images)
                         </Typography>
-                        <Typography variant="caption" color="textSecondary" gutterBottom display="block">
-                            💡 Tip: You can copy-paste images directly from clipboard or take screenshots!
-                        </Typography>
                         <ReactQuill
                             theme="snow"
                             value={formData.content}
@@ -351,55 +365,36 @@ export default function SimpleEmail() {
                             modules={quillModules}
                             formats={quillFormats}
                             style={{ height: 300, marginBottom: 50 }}
-                            placeholder="Write your email message here..."
                         />
                     </Box>
 
-                    <Button
-                        variant="outlined"
-                        component="label"
-                        startIcon={<AttachFileIcon />}
-                    >
+                    <Button variant="outlined" component="label" startIcon={<AttachFileIcon />}>
                         Add File Attachment (Optional)
-                        <input
-                            type="file"
-                            hidden
-                            onChange={(e) => setAttachment(e.target.files[0])}
-                        />
+                        <input type="file" hidden onChange={(e) => setAttachment(e.target.files[0])} />
                     </Button>
-                    {attachment && (
-                        <Chip label={attachment.name} onDelete={() => setAttachment(null)} />
-                    )}
+                    {attachment && <Chip label={attachment.name} onDelete={() => setAttachment(null)} />}
 
                     {loading && (
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
-                            <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending {fixedEmails.length} emails... {Math.round(progress)}% (2 sec delay between emails)
+                            <Typography variant="caption" color="textSecondary">
+                                Sending {fixedEmails.length} emails... {Math.round(progress)}%
                             </Typography>
                         </Box>
                     )}
 
-                    <Button
-                        fullWidth
-                        variant="contained"
-                        size="large"
-                        startIcon={<SendIcon />}
-                        onClick={handleSend}
-                        disabled={loading}
-                        sx={{ py: 1.5 }}
-                    >
+                    <Button fullWidth variant="contained" size="large" startIcon={<SendIcon />} onClick={handleSend} disabled={loading}>
                         {loading ? 'Sending...' : 'Send to All Recipients'}
                     </Button>
 
                     {results.length > 0 && (
                         <Paper variant="outlined" sx={{ p: 2, maxHeight: 300, overflow: 'auto' }}>
-                            <Typography variant="subtitle2" gutterBottom>
+                            <Typography variant="subtitle2">
                                 Results: {results.filter(r => r.status === 'sent').length} sent, {results.filter(r => r.status === 'failed').length} failed
                             </Typography>
                             {results.map((r, i) => (
                                 <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
-                                    {r.email}: {r.status} {r.error && `- ${r.error}`} {r.attempt && r.attempt > 1 && `(retried ${r.attempt} times)`}
+                                    {r.email}: {r.status} {r.error && `- ${r.error}`}
                                 </Typography>
                             ))}
                         </Paper>

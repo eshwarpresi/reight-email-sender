@@ -26,6 +26,24 @@ const cleanEmail = (email) => {
     return cleaned;
 };
 
+// Helper function to clean multiple emails (for CC/BCC)
+const cleanMultipleEmails = (emailsString) => {
+    if (!emailsString) return [];
+    
+    // Split by comma or semicolon
+    const emails = emailsString.split(/[;,]/);
+    const cleanedEmails = [];
+    
+    for (const email of emails) {
+        const cleaned = cleanEmail(email.trim());
+        if (cleaned && isValidEmail(cleaned)) {
+            cleanedEmails.push(cleaned);
+        }
+    }
+    
+    return cleanedEmails;
+};
+
 // Helper function to delay between sends
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -48,10 +66,10 @@ const sendEmailWithRetry = async (transporter, mailOptions, retries = 2) => {
 
 export const sendSingleEmail = async (req, res) => {
     try {
-        let { from_email, from_password, to_email, subject, content } = req.body;
+        let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
         const attachment = req.file;
 
-        // Clean and validate email
+        // Clean and validate main recipient email
         const cleanedEmail = cleanEmail(to_email);
         
         if (!isValidEmail(cleanedEmail)) {
@@ -63,6 +81,10 @@ export const sendSingleEmail = async (req, res) => {
             });
         }
 
+        // Clean CC and BCC emails
+        const ccList = cleanMultipleEmails(cc_emails);
+        const bccList = cleanMultipleEmails(bcc_emails);
+
         // Create transporter with connection pool for better performance
         const transporter = nodemailer.createTransport({
             host: 'smtp.gmail.com',
@@ -72,9 +94,9 @@ export const sendSingleEmail = async (req, res) => {
                 user: from_email,
                 pass: from_password,
             },
-            pool: true, // Use connection pool
-            maxConnections: 3, // Limit concurrent connections
-            rateDelta: 2000, // 2 seconds between messages
+            pool: true,
+            maxConnections: 3,
+            rateDelta: 2000,
             rateLimit: true,
         });
 
@@ -89,6 +111,16 @@ export const sendSingleEmail = async (req, res) => {
             text: content.replace(/<[^>]*>/g, ''),
         };
 
+        // Add CC if provided
+        if (ccList.length > 0) {
+            mailOptions.cc = ccList.join(', ');
+        }
+
+        // Add BCC if provided
+        if (bccList.length > 0) {
+            mailOptions.bcc = bccList.join(', ');
+        }
+
         if (attachment) {
             mailOptions.attachments = [{
                 filename: attachment.originalname,
@@ -100,10 +132,12 @@ export const sendSingleEmail = async (req, res) => {
         const result = await sendEmailWithRetry(transporter, mailOptions, 2);
         
         if (result.success) {
-            logger.info(`Email sent successfully to ${cleanedEmail}`);
+            logger.info(`Email sent successfully to ${cleanedEmail}${ccList.length > 0 ? `, CC: ${ccList.join(', ')}` : ''}`);
             res.json({
                 success: true,
-                message: `Email sent to ${cleanedEmail}`
+                message: `Email sent to ${cleanedEmail}`,
+                cc: ccList,
+                bcc: bccList
             });
         } else {
             logger.error(`Failed to send email to ${cleanedEmail}: ${result.error}`);
@@ -126,13 +160,17 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// Batch send with rate limiting
+// Batch send with rate limiting and CC support
 export const sendBatchEmails = async (req, res) => {
     try {
-        const { from_email, from_password, recipients, subject, content } = req.body;
+        const { from_email, from_password, recipients, cc_emails, bcc_emails, subject, content } = req.body;
         const results = [];
         
-        // Validate all emails first
+        // Clean CC and BCC emails (same for all recipients in batch)
+        const ccList = cleanMultipleEmails(cc_emails);
+        const bccList = cleanMultipleEmails(bcc_emails);
+        
+        // Validate all recipient emails first
         const validRecipients = [];
         const invalidRecipients = [];
         
@@ -175,6 +213,16 @@ export const sendBatchEmails = async (req, res) => {
                 text: personalizedContent.replace(/<[^>]*>/g, ''),
             };
             
+            // Add CC if provided
+            if (ccList.length > 0) {
+                mailOptions.cc = ccList.join(', ');
+            }
+            
+            // Add BCC if provided
+            if (bccList.length > 0) {
+                mailOptions.bcc = bccList.join(', ');
+            }
+            
             const result = await sendEmailWithRetry(transporter, mailOptions, 2);
             
             results.push({
@@ -186,7 +234,7 @@ export const sendBatchEmails = async (req, res) => {
             
             // Add delay between emails to avoid rate limiting
             if (i < validRecipients.length - 1) {
-                await delay(2000); // 2 second delay
+                await delay(2000);
             }
         }
         
@@ -202,6 +250,8 @@ export const sendBatchEmails = async (req, res) => {
                 sent: sentCount,
                 failed: failedCount,
                 invalid: invalidRecipients.length,
+                cc: ccList,
+                bcc: bccList,
                 details: results,
                 invalidEmails: invalidRecipients
             }

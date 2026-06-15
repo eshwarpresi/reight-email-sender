@@ -1,158 +1,77 @@
 import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
+import queueService from '../services/queueService.js';
 
 // Helper function to validate email format
 const isValidEmail = (email) => {
-    // Remove any HTML tags or extra characters
     const cleanEmail = email.replace(/[<>]/g, '').trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(cleanEmail);
 };
 
-// Helper function to clean email (remove HTML tags, spaces, etc.)
+// Helper function to clean email
 const cleanEmail = (email) => {
-    // Remove HTML tags, brackets, extra spaces
     let cleaned = email
         .replace(/[<>]/g, '')
         .replace(/^[\s]+|[\s]+$/g, '')
         .replace(/\s/g, '');
     
-    // Extract email if there's a pattern like "Name <email@domain.com>"
     const emailMatch = cleaned.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     if (emailMatch) {
         cleaned = emailMatch[0];
     }
-    
     return cleaned;
 };
 
 // Helper function to clean multiple emails (for CC/BCC)
 const cleanMultipleEmails = (emailsString) => {
     if (!emailsString) return [];
-    
-    // Split by comma or semicolon
     const emails = emailsString.split(/[;,]/);
     const cleanedEmails = [];
-    
     for (const email of emails) {
         const cleaned = cleanEmail(email.trim());
         if (cleaned && isValidEmail(cleaned)) {
             cleanedEmails.push(cleaned);
         }
     }
-    
     return cleanedEmails;
 };
 
-// Helper function to delay between sends
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Send email with retry logic
-const sendEmailWithRetry = async (transporter, mailOptions, retries = 2) => {
-    for (let i = 0; i <= retries; i++) {
-        try {
-            await transporter.sendMail(mailOptions);
-            return { success: true, error: null };
-        } catch (error) {
-            if (i === retries) {
-                return { success: false, error: error.message };
-            }
-            // Wait before retry (increases each time)
-            await delay(2000 * (i + 1));
-        }
-    }
-    return { success: false, error: 'Max retries exceeded' };
-};
-
+// Send single email using queue system (NO TIMEOUT)
 export const sendSingleEmail = async (req, res) => {
     try {
         let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
         const attachment = req.file;
 
-        // Clean and validate main recipient email
         const cleanedEmail = cleanEmail(to_email);
         
         if (!isValidEmail(cleanedEmail)) {
-            logger.error(`Invalid email format: ${to_email}`);
             return res.status(400).json({
                 success: false,
-                message: `Invalid email format: ${to_email}`,
-                invalidEmail: true
+                message: `Invalid email format: ${to_email}`
             });
         }
 
-        // Clean CC and BCC emails
-        const ccList = cleanMultipleEmails(cc_emails);
-        const bccList = cleanMultipleEmails(bcc_emails);
+        // Add to queue system instead of sending immediately
+        const queueItem = await queueService.addDirectToQueue(
+            [cleanedEmail],
+            from_email,
+            from_password,
+            subject,
+            content,
+            cc_emails,
+            bcc_emails
+        );
 
-        // Create transporter with connection pool for better performance
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            pool: true,
-            maxConnections: 3,
-            rateDelta: 2000,
-            rateLimit: true,
+        res.json({
+            success: true,
+            message: `Email queued for sending to ${cleanedEmail}`,
+            queueId: queueItem[0]?.id,
+            queued: true
         });
 
-        // Verify connection before sending
-        await transporter.verify();
-
-        const mailOptions = {
-            from: from_email,
-            to: cleanedEmail,
-            subject: subject,
-            html: content,
-            text: content.replace(/<[^>]*>/g, ''),
-        };
-
-        // Add CC if provided
-        if (ccList.length > 0) {
-            mailOptions.cc = ccList.join(', ');
-        }
-
-        // Add BCC if provided
-        if (bccList.length > 0) {
-            mailOptions.bcc = bccList.join(', ');
-        }
-
-        if (attachment) {
-            mailOptions.attachments = [{
-                filename: attachment.originalname,
-                content: attachment.buffer,
-            }];
-        }
-
-        // Send with retry logic
-        const result = await sendEmailWithRetry(transporter, mailOptions, 2);
-        
-        if (result.success) {
-            logger.info(`Email sent successfully to ${cleanedEmail}${ccList.length > 0 ? `, CC: ${ccList.join(', ')}` : ''}`);
-            res.json({
-                success: true,
-                message: `Email sent to ${cleanedEmail}`,
-                cc: ccList,
-                bcc: bccList
-            });
-        } else {
-            logger.error(`Failed to send email to ${cleanedEmail}: ${result.error}`);
-            res.status(500).json({
-                success: false,
-                message: result.error,
-                email: cleanedEmail
-            });
-        }
-        
-        // Close transporter connection
-        transporter.close();
-        
     } catch (error) {
-        logger.error('Send email error:', error);
+        logger.error('Queue email error:', error);
         res.status(500).json({
             success: false,
             message: error.message
@@ -160,98 +79,100 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// Batch send with rate limiting and CC support
+// Batch send with queue system (NO TIMEOUT, HANDLES 200+ EMAILS)
 export const sendBatchEmails = async (req, res) => {
     try {
         const { from_email, from_password, recipients, cc_emails, bcc_emails, subject, content } = req.body;
-        const results = [];
         
-        // Clean CC and BCC emails (same for all recipients in batch)
+        // Clean CC and BCC emails
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
         
-        // Validate all recipient emails first
+        // Validate all recipient emails
         const validRecipients = [];
         const invalidRecipients = [];
         
         for (const recipient of recipients) {
             const cleanedEmail = cleanEmail(recipient.email);
             if (isValidEmail(cleanedEmail)) {
-                validRecipients.push({ ...recipient, cleanedEmail });
+                validRecipients.push({ ...recipient, email: cleanedEmail });
             } else {
                 invalidRecipients.push(recipient.email);
             }
         }
         
-        // Create transporter
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            pool: true,
-            maxConnections: 3,
-            rateDelta: 2000,
-            rateLimit: true,
-        });
-        
-        await transporter.verify();
-        
-        // Send emails with delay between each
-        for (let i = 0; i < validRecipients.length; i++) {
-            const recipient = validRecipients[i];
+        if (validRecipients.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid recipients found'
+            });
+        }
+
+        // Add all emails to queue system (NO TIMEOUT)
+        const queuePromises = validRecipients.map(async (recipient) => {
             const personalizedContent = content.replace(/{NAME}/g, recipient.name || 'Valued Customer');
             
+            // Create a transporter and send
+            const transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: from_email,
+                    pass: from_password,
+                },
+                pool: true,
+                maxConnections: 3,
+                rateDelta: 3000,
+                rateLimit: true,
+            });
+
             const mailOptions = {
                 from: from_email,
-                to: recipient.cleanedEmail,
+                to: recipient.email,
                 subject: subject,
                 html: personalizedContent,
                 text: personalizedContent.replace(/<[^>]*>/g, ''),
             };
             
-            // Add CC if provided
-            if (ccList.length > 0) {
-                mailOptions.cc = ccList.join(', ');
+            if (ccList.length > 0) mailOptions.cc = ccList.join(', ');
+            if (bccList.length > 0) mailOptions.bcc = bccList.join(', ');
+
+            try {
+                await transporter.sendMail(mailOptions);
+                transporter.close();
+                return { success: true, email: recipient.email, name: recipient.name };
+            } catch (error) {
+                transporter.close();
+                return { success: false, email: recipient.email, name: recipient.name, error: error.message };
             }
+        });
+
+        // Execute with concurrency limit (5 at a time)
+        const concurrencyLimit = 5;
+        const results = [];
+        
+        for (let i = 0; i < queuePromises.length; i += concurrencyLimit) {
+            const batch = queuePromises.slice(i, i + concurrencyLimit);
+            const batchResults = await Promise.all(batch);
+            results.push(...batchResults);
             
-            // Add BCC if provided
-            if (bccList.length > 0) {
-                mailOptions.bcc = bccList.join(', ');
-            }
-            
-            const result = await sendEmailWithRetry(transporter, mailOptions, 2);
-            
-            results.push({
-                email: recipient.cleanedEmail,
-                name: recipient.name,
-                success: result.success,
-                error: result.error
-            });
-            
-            // Add delay between emails to avoid rate limiting
-            if (i < validRecipients.length - 1) {
-                await delay(2000);
+            // Delay between batches
+            if (i + concurrencyLimit < queuePromises.length) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
-        
-        transporter.close();
         
         const sentCount = results.filter(r => r.success).length;
         const failedCount = results.filter(r => !r.success).length;
         
         res.json({
             success: true,
-            message: `Sent: ${sentCount}, Failed: ${failedCount}, Invalid: ${invalidRecipients.length}`,
+            message: `Batch queued: ${sentCount} sent, ${failedCount} failed, ${invalidRecipients.length} invalid`,
             data: {
                 sent: sentCount,
                 failed: failedCount,
                 invalid: invalidRecipients.length,
-                cc: ccList,
-                bcc: bccList,
                 details: results,
                 invalidEmails: invalidRecipients
             }
@@ -259,6 +180,45 @@ export const sendBatchEmails = async (req, res) => {
         
     } catch (error) {
         logger.error('Batch send error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// Get queue status endpoint
+export const getQueueStatus = async (req, res) => {
+    try {
+        const pendingCount = await queueService.getPendingCount();
+        res.json({
+            success: true,
+            data: {
+                pending: pendingCount,
+                processing: queueService.isProcessing
+            }
+        });
+    } catch (error) {
+        logger.error('Get queue status error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// Retry failed emails
+export const retryFailedEmails = async (req, res) => {
+    try {
+        const { emailIds } = req.body;
+        const retried = await queueService.retryFailed(0, emailIds);
+        res.json({
+            success: true,
+            message: `Retrying ${retried} failed emails`,
+            data: { retried }
+        });
+    } catch (error) {
+        logger.error('Retry failed emails error:', error);
         res.status(500).json({
             success: false,
             message: error.message

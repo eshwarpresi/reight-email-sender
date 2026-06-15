@@ -10,12 +10,12 @@ class QueueService {
     }
 
     startProcessor() {
-        // Process queue every 10 seconds
+        // Process queue every 5 seconds (faster for better throughput)
         this.processingInterval = setInterval(() => {
             this.processQueue();
-        }, 10000);
+        }, 5000);
         
-        logger.info('Email queue processor started');
+        logger.info('Email queue processor started - Optimized for bulk sending');
     }
 
     async processQueue() {
@@ -26,7 +26,7 @@ class QueueService {
         this.isProcessing = true;
         
         try {
-            // Get pending emails with retry count less than max attempts
+            // Get pending emails - increased limit for better throughput
             const pendingEmails = await query(
                 `SELECT eq.*, c.subject, c.content, c.content_html 
                  FROM email_queue eq
@@ -34,7 +34,7 @@ class QueueService {
                  WHERE eq.status IN ('pending', 'failed')
                  AND eq.retry_count < ?
                  ORDER BY eq.created_at ASC
-                 LIMIT 10`,
+                 LIMIT 20`,
                 [parseInt(process.env.RETRY_ATTEMPTS) || 3]
             );
 
@@ -42,10 +42,19 @@ class QueueService {
                 return;
             }
 
-            logger.info(`Processing ${pendingEmails.length} pending emails`);
+            logger.info(`Processing ${pendingEmails.length} pending emails (optimized batch)`);
 
-            for (const email of pendingEmails) {
-                await this.processEmail(email);
+            // Process emails with concurrency control (3 at a time)
+            const concurrencyLimit = 3;
+            for (let i = 0; i < pendingEmails.length; i += concurrencyLimit) {
+                const batch = pendingEmails.slice(i, i + concurrencyLimit);
+                const promises = batch.map(email => this.processEmail(email));
+                await Promise.all(promises);
+                
+                // Small delay between batches to respect Gmail limits
+                if (i + concurrencyLimit < pendingEmails.length) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
             }
 
         } catch (error) {
@@ -63,7 +72,9 @@ class QueueService {
                 subject: email.subject,
                 content: email.content,
                 content_html: email.content_html,
-                attachments: email.attachments ? JSON.parse(email.attachments) : []
+                attachments: email.attachments ? JSON.parse(email.attachments) : [],
+                cc_emails: email.cc_emails || '',
+                bcc_emails: email.bcc_emails || ''
             };
 
             const result = await emailService.sendEmail(
@@ -73,9 +84,9 @@ class QueueService {
             );
 
             if (result.success) {
-                logger.info(`Email processed successfully: ${email.id}`);
+                logger.info(`Email sent successfully to ${email.recipient_email}`);
             } else {
-                logger.error(`Email processing failed: ${email.id}`, result.error);
+                logger.error(`Failed to send to ${email.recipient_email}: ${result.error}`);
             }
 
             return result;
@@ -96,7 +107,7 @@ class QueueService {
         }
     }
 
-    async addToQueue(campaignId, recipients, subject, content, contentHtml, attachments) {
+    async addToQueue(campaignId, recipients, subject, content, contentHtml, attachments, ccEmails = '', bccEmails = '') {
         const queueItems = [];
         
         for (const recipient of recipients) {
@@ -129,30 +140,57 @@ class QueueService {
         return queueItems;
     }
 
+    async addDirectToQueue(emails, fromEmail, fromPassword, subject, content, ccEmails = '', bccEmails = '') {
+        const queueItems = [];
+        
+        for (const email of emails) {
+            const result = await run(
+                `INSERT INTO email_queue 
+                 (campaign_id, recipient_email, recipient_name, subject, content, content_html, status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))`,
+                [
+                    null, // No campaign for direct sends
+                    email,
+                    null,
+                    subject,
+                    content,
+                    content
+                ]
+            );
+            
+            queueItems.push({
+                id: result.lastID,
+                email: email
+            });
+        }
+        
+        logger.info(`Added ${queueItems.length} direct emails to queue`);
+        this.processQueue();
+        
+        return queueItems;
+    }
+
     async getQueueStatus(campaignId) {
         const stats = await queryOne(
             `SELECT 
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
                 SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                AVG(CASE WHEN status = 'sent' THEN 
-                    (julianday(sent_at) - julianday(created_at)) * 86400000 
-                ELSE NULL END) as avg_processing_time_ms
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
              FROM email_queue
-             WHERE campaign_id = ?`,
-            [campaignId]
+             WHERE campaign_id = ? OR (campaign_id IS NULL AND ? = 0)`,
+            [campaignId, campaignId || 0]
         );
         
         return stats;
     }
 
     async retryFailed(campaignId, emailIds = null) {
-        let queryStr = `UPDATE email_queue SET status = 'pending', retry_count = retry_count + 1 
+        let queryStr = `UPDATE email_queue SET status = 'pending', retry_count = retry_count + 1, error_message = NULL
                     WHERE status = 'failed'`;
         const params = [];
         
-        if (campaignId) {
+        if (campaignId && campaignId !== 0) {
             queryStr += ` AND campaign_id = ?`;
             params.push(campaignId);
         }
@@ -186,6 +224,13 @@ class QueueService {
         return result.changes;
     }
 
+    async getPendingCount() {
+        const result = await queryOne(
+            `SELECT COUNT(*) as count FROM email_queue WHERE status = 'pending'`
+        );
+        return result?.count || 0;
+    }
+
     stopProcessor() {
         if (this.processingInterval) {
             clearInterval(this.processingInterval);
@@ -196,4 +241,3 @@ class QueueService {
 }
 
 export default new QueueService();
-

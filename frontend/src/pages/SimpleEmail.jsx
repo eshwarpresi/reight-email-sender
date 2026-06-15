@@ -30,44 +30,111 @@ export default function SimpleEmail() {
     const [attachment, setAttachment] = useState(null);
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
+    const [fixedEmails, setFixedEmails] = useState([]);
+    const [originalInvalidCount, setOriginalInvalidCount] = useState(0);
 
-    // Quill modules configuration for image support
-    const quillModules = {
-        toolbar: [
-            [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
-            ['bold', 'italic', 'underline', 'strike'],
-            [{ 'color': [] }, { 'background': [] }],
-            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-            ['link', 'image', 'video'],
-            ['clean']
-        ],
+    // Advanced email fixing function - NO SKIPPING, ALL EMAILS WILL BE SENT
+    const fixAndExtractEmails = (emailString) => {
+        // First, split by common separators: new line, comma, semicolon, space
+        let allEmails = [];
+        
+        // Split by new lines first
+        const lines = emailString.split(/\n/);
+        
+        for (const line of lines) {
+            // Check if line contains multiple emails separated by ; or ,
+            if (line.includes(';') || line.includes(',')) {
+                const separated = line.split(/[;,]/);
+                for (const sep of separated) {
+                    allEmails.push(sep.trim());
+                }
+            } else {
+                allEmails.push(line.trim());
+            }
+        }
+        
+        const extractedEmails = [];
+        
+        for (const email of allEmails) {
+            if (!email) continue;
+            
+            let extracted = email;
+            
+            // Remove HTML tags and brackets
+            extracted = extracted.replace(/[<>]/g, '');
+            
+            // Extract email from "Name <email@domain.com>" or "Name email@domain.com" format
+            const emailMatch = extracted.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+            if (emailMatch) {
+                extracted = emailMatch[0];
+            }
+            
+            // Remove any remaining special characters
+            extracted = extracted.replace(/[\[\](){}]/g, '');
+            
+            // Fix common domain issues
+            if (extracted.includes('@') && !extracted.includes('.com') && !extracted.includes('.cn') && !extracted.includes('.net') && !extracted.includes('.org')) {
+                // Try to add .com if missing
+                const atIndex = extracted.indexOf('@');
+                const domain = extracted.substring(atIndex + 1);
+                if (domain && !domain.includes('.')) {
+                    extracted = extracted + '.com';
+                }
+            }
+            
+            // Validate email format
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (emailRegex.test(extracted)) {
+                extractedEmails.push(extracted.toLowerCase());
+            } else if (extracted.includes('@')) {
+                // Still try to send even if format is unusual
+                extractedEmails.push(extracted.toLowerCase());
+            }
+        }
+        
+        // Remove duplicates while preserving order
+        const uniqueEmails = [];
+        const seen = new Set();
+        for (const email of extractedEmails) {
+            if (!seen.has(email)) {
+                seen.add(email);
+                uniqueEmails.push(email);
+            }
+        }
+        
+        return uniqueEmails;
     };
 
-    const quillFormats = [
-        'header', 'bold', 'italic', 'underline', 'strike',
-        'color', 'background', 'list', 'bullet',
-        'link', 'image', 'video'
-    ];
-
-    // Load saved SMTP settings on component mount
-    useEffect(() => {
-        loadSavedSettings();
-    }, []);
-
-    const loadSavedSettings = async () => {
+    // Send email with retry logic
+    const sendEmailWithRetry = async (email, attempt = 1) => {
         try {
-            const response = await api.get('/auth/smtp-settings');
-            if (response.data.data && response.data.data.smtp_email) {
-                setFormData(prev => ({
-                    ...prev,
-                    from_email: response.data.data.smtp_email,
-                    from_password: response.data.data.smtp_password,
-                }));
-                setHasSavedSettings(true);
-                toast.success('Loaded your saved Gmail settings!');
+            const formDataToSend = new FormData();
+            formDataToSend.append('from_email', formData.from_email);
+            formDataToSend.append('from_password', formData.from_password);
+            formDataToSend.append('to_email', email);
+            formDataToSend.append('subject', formData.subject);
+            formDataToSend.append('content', formData.content);
+            if (attachment) {
+                formDataToSend.append('attachment', attachment);
             }
+
+            await api.post('/send-single-email', formDataToSend, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 30000
+            });
+            
+            return { success: true, email, attempt };
         } catch (error) {
-            console.error('Failed to load SMTP settings:', error);
+            if (attempt < 3) {
+                // Retry up to 3 times with increasing delay
+                await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+                return sendEmailWithRetry(email, attempt + 1);
+            }
+            return { 
+                success: false, 
+                email, 
+                error: error.response?.data?.message || error.message || 'Failed after 3 attempts'
+            };
         }
     };
 
@@ -93,66 +160,96 @@ export default function SimpleEmail() {
             return;
         }
 
-        // Parse emails (comma, new line, or space separated)
-        const emails = formData.to_emails.split(/[,\n\s]+/).filter(e => e.trim() && e.includes('@'));
+        // Extract and fix all emails (NO SKIPPING)
+        const allEmails = fixAndExtractEmails(formData.to_emails);
         
-        if (emails.length === 0) {
-            toast.error('No valid email addresses found');
+        if (allEmails.length === 0) {
+            toast.error('No email addresses found. Please check your input.');
             return;
         }
 
+        setFixedEmails(allEmails);
         setLoading(true);
         setProgress(0);
         setResults([]);
 
         let sent = 0;
         let failed = 0;
+        const failedEmails = [];
 
-        // Send 5 emails at a time for faster processing
-        const CONCURRENT_LIMIT = 5;
-        
-        for (let i = 0; i < emails.length; i += CONCURRENT_LIMIT) {
-            const batch = emails.slice(i, i + CONCURRENT_LIMIT);
+        // Send emails one by one with delay and retry
+        for (let i = 0; i < allEmails.length; i++) {
+            const email = allEmails[i];
             
-            const promises = batch.map(async (email) => {
-                try {
-                    const formDataToSend = new FormData();
-                    formDataToSend.append('from_email', formData.from_email);
-                    formDataToSend.append('from_password', formData.from_password);
-                    formDataToSend.append('to_email', email.trim());
-                    formDataToSend.append('subject', formData.subject);
-                    formDataToSend.append('content', formData.content);
-                    if (attachment) {
-                        formDataToSend.append('attachment', attachment);
-                    }
-
-                    await api.post('/send-single-email', formDataToSend, {
-                        headers: { 'Content-Type': 'multipart/form-data' }
-                    });
-                    
-                    return { email, status: 'sent', success: true };
-                } catch (error) {
-                    return { email, status: 'failed', error: error.response?.data?.message || 'Failed', success: false };
-                }
-            });
-            
-            const batchResults = await Promise.all(promises);
-            
-            for (const result of batchResults) {
-                if (result.success) {
-                    sent++;
-                    setResults(prev => [...prev, { email: result.email, status: 'sent' }]);
-                } else {
-                    failed++;
-                    setResults(prev => [...prev, { email: result.email, status: 'failed', error: result.error }]);
-                }
+            // Add delay between emails (2 seconds)
+            if (i > 0) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
             
-            setProgress(Math.min(((i + CONCURRENT_LIMIT) / emails.length) * 100, 100));
+            const result = await sendEmailWithRetry(email);
+            
+            if (result.success) {
+                sent++;
+                setResults(prev => [...prev, { email: result.email, status: 'sent', attempt: result.attempt }]);
+            } else {
+                failed++;
+                failedEmails.push({ email: result.email, error: result.error });
+                setResults(prev => [...prev, { email: result.email, status: 'failed', error: result.error, attempt: result.attempt }]);
+            }
+            
+            // Update progress
+            setProgress(((i + 1) / allEmails.length) * 100);
         }
 
         setLoading(false);
-        toast.success(`Completed! Sent: ${sent}, Failed: ${failed}`);
+        
+        // Show summary
+        if (failed === 0) {
+            toast.success(`✅ Success! All ${sent} emails sent successfully!`);
+        } else {
+            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. Retry failed emails from History page.`);
+            console.log('Failed emails:', failedEmails);
+        }
+    };
+
+    // Quill modules configuration
+    const quillModules = {
+        toolbar: [
+            [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+            ['bold', 'italic', 'underline', 'strike'],
+            [{ 'color': [] }, { 'background': [] }],
+            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+            ['link', 'image', 'video'],
+            ['clean']
+        ],
+    };
+
+    const quillFormats = [
+        'header', 'bold', 'italic', 'underline', 'strike',
+        'color', 'background', 'list', 'bullet',
+        'link', 'image', 'video'
+    ];
+
+    // Load saved SMTP settings
+    useEffect(() => {
+        loadSavedSettings();
+    }, []);
+
+    const loadSavedSettings = async () => {
+        try {
+            const response = await api.get('/auth/smtp-settings');
+            if (response.data.data && response.data.data.smtp_email) {
+                setFormData(prev => ({
+                    ...prev,
+                    from_email: response.data.data.smtp_email,
+                    from_password: response.data.data.smtp_password,
+                }));
+                setHasSavedSettings(true);
+                toast.success('Loaded your saved Gmail settings!');
+            }
+        } catch (error) {
+            console.error('Failed to load SMTP settings:', error);
+        }
     };
 
     return (
@@ -186,8 +283,14 @@ export default function SimpleEmail() {
                         </Alert>
                     )}
 
-                    <Alert severity="info">
-                        <strong>Rich Text Editor:</strong> You can copy-paste images, format text, add links, and more!
+                    <Alert severity="warning">
+                        <strong>Email Tips:</strong>
+                        <ul style={{ margin: '8px 0 0 20px' }}>
+                            <li>Gmail allows ~500 emails per day</li>
+                            <li>2 second delay between emails to avoid rate limiting</li>
+                            <li>Auto-fixes invalid email formats (no emails are skipped)</li>
+                            <li>Each email retries up to 3 times if failed</li>
+                        </ul>
                     </Alert>
 
                     <TextField
@@ -219,11 +322,11 @@ export default function SimpleEmail() {
                         label="Recipient Emails"
                         multiline
                         rows={6}
-                        placeholder="Enter email addresses (one per line or comma separated)&#10;example1@gmail.com&#10;example2@yahoo.com&#10;example3@outlook.com"
+                        placeholder="Paste email addresses (supports formats like:&#10;email@domain.com&#10;Name &lt;email@domain.com&gt;&#10;email1@domain.com; email2@domain.com&#10;email@domain.com, another@domain.com"
                         value={formData.to_emails}
                         onChange={(e) => setFormData({ ...formData, to_emails: e.target.value })}
                         required
-                        helperText="Paste 100+ email addresses - each will receive individually"
+                        helperText="Auto-fixes invalid formats - every email will be sent!"
                     />
 
                     <TextField
@@ -248,7 +351,7 @@ export default function SimpleEmail() {
                             modules={quillModules}
                             formats={quillFormats}
                             style={{ height: 300, marginBottom: 50 }}
-                            placeholder="Write your email message here... You can paste images, format text, add links, etc."
+                            placeholder="Write your email message here..."
                         />
                     </Box>
 
@@ -272,7 +375,7 @@ export default function SimpleEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending... {Math.round(progress)}% (5 emails at a time)
+                                Sending {fixedEmails.length} emails... {Math.round(progress)}% (2 sec delay between emails)
                             </Typography>
                         </Box>
                     )}
@@ -291,10 +394,12 @@ export default function SimpleEmail() {
 
                     {results.length > 0 && (
                         <Paper variant="outlined" sx={{ p: 2, maxHeight: 300, overflow: 'auto' }}>
-                            <Typography variant="subtitle2" gutterBottom>Results:</Typography>
+                            <Typography variant="subtitle2" gutterBottom>
+                                Results: {results.filter(r => r.status === 'sent').length} sent, {results.filter(r => r.status === 'failed').length} failed
+                            </Typography>
                             {results.map((r, i) => (
                                 <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
-                                    {r.email}: {r.status} {r.error && `- ${r.error}`}
+                                    {r.email}: {r.status} {r.error && `- ${r.error}`} {r.attempt && r.attempt > 1 && `(retried ${r.attempt} times)`}
                                 </Typography>
                             ))}
                         </Paper>

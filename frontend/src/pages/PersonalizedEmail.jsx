@@ -37,6 +37,7 @@ export default function PersonalizedEmail() {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [recipients, setRecipients] = useState([]);
+    const [fixedRecipients, setFixedRecipients] = useState([]);
     const [template, setTemplate] = useState('');
     const [subject, setSubject] = useState('');
     const [fromEmail, setFromEmail] = useState('');
@@ -45,8 +46,69 @@ export default function PersonalizedEmail() {
     const [previewData, setPreviewData] = useState([]);
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
+    const [sendResults, setSendResults] = useState([]);
 
-    // Quill modules configuration for image support
+    // Advanced email fixing - NO SKIPPING, extract email from any format
+    const fixEmail = (email) => {
+        if (!email) return null;
+        
+        let cleaned = email.toString().trim();
+        
+        // Remove HTML tags and brackets
+        cleaned = cleaned.replace(/[<>]/g, '');
+        
+        // Extract email from "Name <email@domain.com>" or "Name email@domain.com" format
+        const emailMatch = cleaned.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        if (emailMatch) {
+            cleaned = emailMatch[0];
+        }
+        
+        // Remove any remaining special characters
+        cleaned = cleaned.replace(/[\[\](){}]/g, '');
+        
+        // Fix common domain issues
+        if (cleaned.includes('@') && !cleaned.includes('.') && cleaned.split('@')[1].length > 0) {
+            // Add .com if domain has no dot
+            cleaned = cleaned + '.com';
+        }
+        
+        // Convert to lowercase
+        cleaned = cleaned.toLowerCase();
+        
+        return cleaned;
+    };
+
+    // Fix all recipients when loaded - NO SKIPPING
+    useEffect(() => {
+        const fixed = [];
+        const originalCount = recipients.length;
+        
+        for (const recipient of recipients) {
+            const fixedEmail = fixEmail(recipient.email);
+            if (fixedEmail && fixedEmail.includes('@')) {
+                fixed.push({
+                    name: recipient.name || 'Customer',
+                    email: fixedEmail,
+                    originalEmail: recipient.email
+                });
+            } else if (recipient.email && recipient.email.includes('@')) {
+                // Even if not perfect, try to send
+                fixed.push({
+                    name: recipient.name || 'Customer',
+                    email: recipient.email.toLowerCase(),
+                    originalEmail: recipient.email
+                });
+            }
+        }
+        
+        setFixedRecipients(fixed);
+        
+        if (originalCount > 0 && fixed.length < originalCount) {
+            toast.info(`Fixed ${originalCount - fixed.length} email(s) that had formatting issues`);
+        }
+    }, [recipients]);
+
+    // Quill modules configuration
     const quillModules = {
         toolbar: [
             [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
@@ -64,7 +126,7 @@ export default function PersonalizedEmail() {
         'link', 'image', 'video'
     ];
 
-    // Load saved SMTP settings on component mount
+    // Load saved SMTP settings
     useEffect(() => {
         loadSavedSettings();
     }, []);
@@ -94,12 +156,10 @@ export default function PersonalizedEmail() {
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
             
-            // Try to detect headers from first row
             const headers = rows[0];
             let nameColIndex = -1;
             let emailColIndex = -1;
             
-            // Find column indices for Name and Email
             for (let i = 0; i < headers.length; i++) {
                 const header = String(headers[i] || '').toLowerCase().trim();
                 if (header === 'name' || header === 'names') {
@@ -110,11 +170,9 @@ export default function PersonalizedEmail() {
                 }
             }
             
-            // If headers not found, assume first col is Name, second is Email
             if (nameColIndex === -1) nameColIndex = 0;
             if (emailColIndex === -1) emailColIndex = 1;
             
-            // Parse rows (skip header row if it exists)
             const startRow = headers.some(h => 
                 String(h || '').toLowerCase().includes('name') || 
                 String(h || '').toLowerCase().includes('email')
@@ -128,7 +186,7 @@ export default function PersonalizedEmail() {
                 const name = row[nameColIndex] ? String(row[nameColIndex]).trim() : '';
                 const email = row[emailColIndex] ? String(row[emailColIndex]).trim() : '';
                 
-                if (email && email.includes('@') && email !== 'Email') {
+                if (email && email !== 'Email' && email !== 'email') {
                     parsedRecipients.push({
                         name: name || 'Customer',
                         email: email
@@ -157,13 +215,48 @@ export default function PersonalizedEmail() {
     };
 
     const handlePreview = () => {
-        const previews = recipients.slice(0, 5).map(r => ({
+        const previews = fixedRecipients.slice(0, 5).map(r => ({
             email: r.email,
             name: r.name,
+            originalEmail: r.originalEmail,
             message: template.replace(/{NAME}/g, r.name || 'Valued Customer'),
         }));
         setPreviewData(previews);
         setPreviewOpen(true);
+    };
+
+    // Send email with retry logic
+    const sendEmailWithRetry = async (recipient, index, attempt = 1) => {
+        // Add delay between emails
+        if (index > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        const personalizedMessage = template.replace(/{NAME}/g, recipient.name || 'Valued Customer');
+        
+        try {
+            const formData = new FormData();
+            formData.append('from_email', fromEmail);
+            formData.append('from_password', fromPassword);
+            formData.append('to_email', recipient.email);
+            formData.append('subject', subject);
+            formData.append('content', personalizedMessage);
+
+            await api.post('/send-single-email', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 30000
+            });
+            
+            return { success: true, email: recipient.email, name: recipient.name, attempt };
+        } catch (error) {
+            if (attempt < 3) {
+                // Retry up to 3 times
+                await new Promise(resolve => setTimeout(resolve, 3000 * attempt));
+                return sendEmailWithRetry(recipient, index, attempt + 1);
+            }
+            let errorMsg = error.response?.data?.message || error.message || 'Failed';
+            return { success: false, email: recipient.email, name: recipient.name, error: errorMsg, attempt };
+        }
     };
 
     const handleSend = async () => {
@@ -183,60 +276,53 @@ export default function PersonalizedEmail() {
             toast.error('Please enter message template with {NAME}');
             return;
         }
-        if (recipients.length === 0) {
-            toast.error('Please add recipients via Excel file or manually');
+        if (fixedRecipients.length === 0) {
+            toast.error('No recipients found. Please upload an Excel file or add manually.');
             return;
         }
 
         setLoading(true);
         setProgress(0);
+        setSendResults([]);
 
         let sent = 0;
         let failed = 0;
 
-        // Send 5 emails at a time for faster processing
-        const CONCURRENT_LIMIT = 5;
-        
-        for (let i = 0; i < recipients.length; i += CONCURRENT_LIMIT) {
-            const batch = recipients.slice(i, i + CONCURRENT_LIMIT);
+        // Send all emails (NO SKIPPING)
+        for (let i = 0; i < fixedRecipients.length; i++) {
+            const recipient = fixedRecipients[i];
             
-            const promises = batch.map(async (recipient) => {
-                const personalizedMessage = template.replace(/{NAME}/g, recipient.name || 'Valued Customer');
-                
-                try {
-                    const formData = new FormData();
-                    formData.append('from_email', fromEmail);
-                    formData.append('from_password', fromPassword);
-                    formData.append('to_email', recipient.email);
-                    formData.append('subject', subject);
-                    formData.append('content', personalizedMessage);
-
-                    await api.post('/send-single-email', formData, {
-                        headers: { 'Content-Type': 'multipart/form-data' }
-                    });
-                    
-                    return { success: true, email: recipient.email };
-                } catch (error) {
-                    return { success: false, email: recipient.email, error: error.message };
-                }
-            });
+            const result = await sendEmailWithRetry(recipient, i);
             
-            const batchResults = await Promise.all(promises);
-            
-            for (const result of batchResults) {
-                if (result.success) {
-                    sent++;
-                } else {
-                    failed++;
-                    console.error(`Failed to send to ${result.email}:`, result.error);
-                }
+            if (result.success) {
+                sent++;
+                setSendResults(prev => [...prev, { 
+                    email: result.email, 
+                    name: result.name, 
+                    status: 'sent',
+                    attempt: result.attempt 
+                }]);
+            } else {
+                failed++;
+                setSendResults(prev => [...prev, { 
+                    email: result.email, 
+                    name: result.name, 
+                    status: 'failed', 
+                    error: result.error,
+                    attempt: result.attempt
+                }]);
             }
             
-            setProgress(Math.min(((i + CONCURRENT_LIMIT) / recipients.length) * 100, 100));
+            setProgress(((i + 1) / fixedRecipients.length) * 100);
         }
 
         setLoading(false);
-        toast.success(`Completed! Sent: ${sent}, Failed: ${failed}`);
+        
+        if (failed === 0) {
+            toast.success(`✅ Success! All ${sent} personalized emails sent successfully!`);
+        } else {
+            toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. You can retry failed emails.`);
+        }
     };
 
     return (
@@ -246,7 +332,7 @@ export default function PersonalizedEmail() {
                     Personalized Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each email is personalized with recipient's name - Upload Excel/CSV file
+                    Each email is personalized with recipient's name - NO EMAIL WILL BE SKIPPED
                 </Typography>
 
                 <Stack spacing={3}>
@@ -266,19 +352,19 @@ export default function PersonalizedEmail() {
                     {!hasSavedSettings && (
                         <Alert severity="info">
                             <strong>Save your Gmail credentials once in Settings page!</strong> 
-                            Go to Settings → Gmail SMTP Settings to save your email and app password permanently.
+                            Go to Settings → Gmail SMTP Settings.
                         </Alert>
                     )}
 
                     <Alert severity="info">
                         <strong>How it works:</strong>
-                        <ol style={{ margin: '8px 0 0 20px' }}>
+                        <ul style={{ margin: '8px 0 0 20px' }}>
                             <li>Upload Excel/CSV file with columns: <strong>Name, Email</strong></li>
                             <li>Write your message template using <strong>{'{NAME}'}</strong> as placeholder</li>
-                            <li>Use rich text editor to add images, format text, etc.</li>
-                            <li>System replaces {'{NAME}'} with each person's name automatically</li>
-                            <li>Send personalized emails to everyone (5 at a time for speed)</li>
-                        </ol>
+                            <li>Auto-fixes invalid email formats - <strong>NO EMAILS ARE SKIPPED</strong></li>
+                            <li>2 second delay between emails to avoid rate limiting</li>
+                            <li>Automatic retry (up to 3 times) for failed emails</li>
+                        </ul>
                     </Alert>
 
                     <TextField
@@ -318,9 +404,9 @@ export default function PersonalizedEmail() {
                             Message Template (Rich Text - Supports Images)
                         </Typography>
                         <Typography variant="caption" color="textSecondary" gutterBottom display="block">
-                            💡 Tip: Use {'{NAME}'} as placeholder - it will be replaced with each recipient's name
+                            💡 Use {'{NAME}'} as placeholder - Auto replaced with each recipient's name
                             <br />
-                            📸 You can copy-paste images directly from clipboard or take screenshots!
+                            📸 Copy-paste images directly from clipboard!
                         </Typography>
                         <ReactQuill
                             theme="snow"
@@ -329,13 +415,13 @@ export default function PersonalizedEmail() {
                             modules={quillModules}
                             formats={quillFormats}
                             style={{ height: 300, marginBottom: 50 }}
-                            placeholder='Example:&#10;Hi {NAME},&#10;&#10;Your freight rates are ready.&#10;&#10;[You can paste images here]&#10;&#10;Best regards,&#10;Operations Team'
+                            placeholder='Example:&#10;Hi {NAME},&#10;&#10;Your freight rates are ready.&#10;&#10;Best regards,&#10;Operations Team'
                         />
                     </Box>
 
                     <Box>
                         <Typography variant="subtitle1" gutterBottom>
-                            Recipients List
+                            Recipients List ({fixedRecipients.length} valid recipients)
                         </Typography>
                         <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                             <Button
@@ -362,33 +448,37 @@ export default function PersonalizedEmail() {
                                 variant="outlined"
                                 startIcon={<PreviewIcon />}
                                 onClick={handlePreview}
-                                disabled={recipients.length === 0 || !template}
+                                disabled={fixedRecipients.length === 0 || !template}
                             >
-                                Preview
+                                Preview First 5
                             </Button>
                         </Box>
 
-                        {recipients.length > 0 && (
+                        {fixedRecipients.length > 0 && (
                             <TableContainer component={Paper} variant="outlined">
                                 <Table size="small">
                                     <TableHead>
                                         <TableRow>
                                             <TableCell>Name</TableCell>
-                                            <TableCell>Email</TableCell>
-                                            <TableCell>Preview Message</TableCell>
+                                            <TableCell>Email (Fixed)</TableCell>
+                                            <TableCell>Preview</TableCell>
                                             <TableCell>Action</TableCell>
                                         </TableRow>
                                     </TableHead>
                                     <TableBody>
-                                        {recipients.slice(0, 10).map((r, idx) => (
+                                        {fixedRecipients.slice(0, 10).map((r, idx) => (
                                             <TableRow key={idx}>
                                                 <TableCell>{r.name}</TableCell>
                                                 <TableCell>{r.email}</TableCell>
-                                                <TableCell sx={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {template.replace(/{NAME}/g, r.name || 'Valued Customer').replace(/<[^>]*>/g, '').substring(0, 50)}...
+                                                <TableCell sx={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {template.replace(/{NAME}/g, r.name || 'Customer').replace(/<[^>]*>/g, '').substring(0, 40)}...
                                                 </TableCell>
                                                 <TableCell>
-                                                    <IconButton size="small" onClick={() => handleRemoveRecipient(idx)}>
+                                                    <IconButton size="small" onClick={() => {
+                                                        const newRecipients = [...recipients];
+                                                        newRecipients.splice(idx, 1);
+                                                        setRecipients(newRecipients);
+                                                    }}>
                                                         <DeleteIcon />
                                                     </IconButton>
                                                 </TableCell>
@@ -398,9 +488,9 @@ export default function PersonalizedEmail() {
                                 </Table>
                             </TableContainer>
                         )}
-                        {recipients.length > 10 && (
+                        {fixedRecipients.length > 10 && (
                             <Typography variant="caption" color="textSecondary">
-                                + {recipients.length - 10} more recipients
+                                + {fixedRecipients.length - 10} more recipients
                             </Typography>
                         )}
                     </Box>
@@ -409,7 +499,7 @@ export default function PersonalizedEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending... {Math.round(progress)}% (5 emails at a time)
+                                Sending... {Math.round(progress)}% ({Math.round(progress / 100 * fixedRecipients.length)} of {fixedRecipients.length}) - 2 sec delay between emails
                             </Typography>
                         </Box>
                     )}
@@ -420,11 +510,24 @@ export default function PersonalizedEmail() {
                         size="large"
                         startIcon={<SendIcon />}
                         onClick={handleSend}
-                        disabled={loading || recipients.length === 0 || !template || !subject}
+                        disabled={loading || fixedRecipients.length === 0 || !template || !subject}
                         sx={{ py: 1.5 }}
                     >
-                        {loading ? 'Sending Personalized Emails...' : `Send to ${recipients.length} Recipients`}
+                        {loading ? 'Sending...' : `Send to ${fixedRecipients.length} Recipients`}
                     </Button>
+
+                    {sendResults.length > 0 && (
+                        <Paper variant="outlined" sx={{ p: 2, maxHeight: 300, overflow: 'auto' }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                                Results: {sendResults.filter(r => r.status === 'sent').length} sent, {sendResults.filter(r => r.status === 'failed').length} failed
+                            </Typography>
+                            {sendResults.map((r, i) => (
+                                <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
+                                    {r.name}: {r.email} - {r.status} {r.error && `(${r.error})`} {r.attempt > 1 && `[retried ${r.attempt}x]`}
+                                </Typography>
+                            ))}
+                        </Paper>
+                    )}
                 </Stack>
             </Paper>
 

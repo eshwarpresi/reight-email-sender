@@ -33,8 +33,6 @@ export default function SimpleEmail() {
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
     const [fixedEmails, setFixedEmails] = useState([]);
-    const [queueId, setQueueId] = useState(null);
-    const [isQueued, setIsQueued] = useState(false);
 
     // Advanced email fixing function
     const fixAndExtractEmails = (emailString) => {
@@ -118,7 +116,6 @@ export default function SimpleEmail() {
         setLoading(true);
         setProgress(0);
         setResults([]);
-        setIsQueued(true);
 
         // Prepare recipients for batch send
         const recipients = allEmails.map(email => ({ email, name: '' }));
@@ -133,19 +130,20 @@ export default function SimpleEmail() {
                 subject: formData.subject,
                 content: formData.content
             }, {
-                timeout: 300000 // 5 minute timeout for large batches
+                timeout: 300000
             });
 
             const data = response.data;
             
             if (data.success) {
-                setResults(data.data.details.map(r => ({
-                    email: r.email,
-                    status: r.success ? 'sent' : 'failed',
-                    error: r.error
-                })));
+                // New response format from queue system
+                setResults([{
+                    email: 'All emails',
+                    status: 'queued',
+                    error: `${data.data.queued} emails queued for sending. Invalid: ${data.data.invalid}`
+                }]);
                 
-                toast.success(`✅ Sent: ${data.data.sent}, Failed: ${data.data.failed}, Invalid: ${data.data.invalid}`);
+                toast.success(`✅ ${data.message}`);
                 setProgress(100);
             } else {
                 toast.error('Failed to send emails: ' + data.message);
@@ -153,11 +151,38 @@ export default function SimpleEmail() {
         } catch (error) {
             console.error('Send error:', error);
             toast.error('Failed to send emails. Please try again.');
+            setResults([{
+                email: 'Error',
+                status: 'failed',
+                error: error.response?.data?.message || error.message
+            }]);
         } finally {
             setLoading(false);
-            setIsQueued(false);
         }
     };
+
+    // Function to check queue status periodically
+    const checkQueueStatus = async () => {
+        try {
+            const response = await api.get('/queue-status');
+            if (response.data.data && response.data.data.pending > 0) {
+                console.log(`Queue status: ${response.data.data.pending} emails pending`);
+            }
+        } catch (error) {
+            console.error('Failed to get queue status:', error);
+        }
+    };
+
+    // Poll queue status every 5 seconds while loading
+    useEffect(() => {
+        let interval;
+        if (loading) {
+            interval = setInterval(checkQueueStatus, 5000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [loading]);
 
     const quillModules = {
         toolbar: [
@@ -243,10 +268,10 @@ export default function SimpleEmail() {
                     <Alert severity="info">
                         <strong>📧 Bulk Email Tips:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
+                            <li>Emails are queued and sent in background</li>
+                            <li>Check the queue status in logs</li>
                             <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
                             <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
-                            <li>Handles 200+ emails smoothly with optimized batch processing</li>
-                            <li>Auto-fixes invalid email formats</li>
                         </ul>
                     </Alert>
 
@@ -337,30 +362,23 @@ export default function SimpleEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary">
-                                Processing {fixedEmails.length} emails... {Math.round(progress)}%
+                                Queuing {fixedEmails.length} emails for sending...
                             </Typography>
                         </Box>
                     )}
 
                     <Button fullWidth variant="contained" size="large" startIcon={<SendIcon />} onClick={handleSend} disabled={loading}>
-                        {loading ? `Sending ${fixedEmails.length} emails...` : `Send to ${fixedEmails.length} Recipients`}
+                        {loading ? `Queuing ${fixedEmails.length} emails...` : `Queue ${fixedEmails.length} Recipients`}
                     </Button>
 
                     {results.length > 0 && (
                         <Paper variant="outlined" sx={{ p: 2, maxHeight: 300, overflow: 'auto' }}>
-                            <Typography variant="subtitle2">
-                                Results: {results.filter(r => r.status === 'sent').length} sent, {results.filter(r => r.status === 'failed').length} failed
-                            </Typography>
-                            {results.slice(0, 20).map((r, i) => (
-                                <Typography key={i} variant="body2" color={r.status === 'sent' ? 'success.main' : 'error.main'}>
+                            <Typography variant="subtitle2">Results:</Typography>
+                            {results.map((r, i) => (
+                                <Typography key={i} variant="body2" color={r.status === 'queued' ? 'info.main' : r.status === 'sent' ? 'success.main' : 'error.main'}>
                                     {r.email}: {r.status} {r.error && `- ${r.error}`}
                                 </Typography>
                             ))}
-                            {results.length > 20 && (
-                                <Typography variant="body2" color="textSecondary">
-                                    ... and {results.length - 20} more results
-                                </Typography>
-                            )}
                         </Paper>
                     )}
                 </Stack>

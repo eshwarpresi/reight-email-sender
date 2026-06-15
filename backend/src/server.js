@@ -37,7 +37,7 @@ app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
-// CORS configuration - FIXED for multiple origins
+// CORS configuration - Allow all origins for production
 const allowedOrigins = process.env.CORS_ORIGIN 
     ? process.env.CORS_ORIGIN.split(',') 
     : ['http://localhost:5173', 'https://mailbolt-email-sender.netlify.app'];
@@ -47,12 +47,8 @@ const corsOptions = {
         // Allow requests with no origin (like mobile apps, curl, etc)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            console.log('Blocked origin:', origin);
-            callback(null, false); // Block origins not in list
-        }
+        // Allow all origins for now to fix CORS
+        callback(null, true);
     },
     credentials: true,
     optionsSuccessStatus: 200,
@@ -158,7 +154,7 @@ async function startServer() {
             logger.info(`Server running on port ${PORT}`);
             logger.info(`Environment: ${process.env.NODE_ENV}`);
             logger.info(`API available at http://0.0.0.0:${PORT}/api`);
-            logger.info(`CORS enabled for origins: ${allowedOrigins.join(', ')}`);
+            logger.info(`CORS enabled for all origins`);
         });
         
         // Graceful shutdown

@@ -23,6 +23,7 @@ import {
     Notifications as NotificationsIcon,
     Security as SecurityIcon,
     Google as GoogleIcon,
+    CopyAll as CopyAllIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
@@ -32,6 +33,7 @@ export default function Settings() {
     const { user, changePassword } = useAuth();
     const [loading, setLoading] = useState(false);
     const [smtpLoading, setSmtpLoading] = useState(false);
+    const [ccBccLoading, setCcBccLoading] = useState(false);
     const [passwordData, setPasswordData] = useState({
         current_password: '',
         new_password: '',
@@ -41,6 +43,10 @@ export default function Settings() {
         smtp_email: '',
         smtp_password: '',
     });
+    const [ccBccData, setCcBccData] = useState({
+        default_cc: '',
+        default_bcc: '',
+    });
     const [settings, setSettings] = useState({
         emailNotifications: true,
         twoFactorAuth: false,
@@ -48,9 +54,10 @@ export default function Settings() {
         timezone: 'UTC',
     });
 
-    // Load saved SMTP settings on component mount
+    // Load saved SMTP settings and CC/BCC settings on component mount
     useEffect(() => {
         loadSmtpSettings();
+        loadDefaultCcBcc();
     }, []);
 
     const loadSmtpSettings = async () => {
@@ -67,6 +74,20 @@ export default function Settings() {
         }
     };
 
+    const loadDefaultCcBcc = async () => {
+        try {
+            const response = await api.get('/auth/default-cc-bcc');
+            if (response.data.data) {
+                setCcBccData({
+                    default_cc: response.data.data.default_cc || '',
+                    default_bcc: response.data.data.default_bcc || '',
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load default CC/BCC settings:', error);
+        }
+    };
+
     const handleSaveSmtpSettings = async () => {
         if (!smtpData.smtp_email) {
             toast.error('Please enter your Gmail address');
@@ -80,11 +101,23 @@ export default function Settings() {
         setSmtpLoading(true);
         try {
             await api.post('/auth/smtp-settings', smtpData);
-            toast.success('Gmail settings saved successfully! You can now send emails without re-entering credentials.');
+            toast.success('Gmail settings saved successfully!');
         } catch (error) {
             toast.error('Failed to save Gmail settings');
         } finally {
             setSmtpLoading(false);
+        }
+    };
+
+    const handleSaveDefaultCcBcc = async () => {
+        setCcBccLoading(true);
+        try {
+            await api.post('/auth/default-cc-bcc', ccBccData);
+            toast.success('Default CC/BCC settings saved! These will auto-fill in email forms.');
+        } catch (error) {
+            toast.error('Failed to save default CC/BCC settings');
+        } finally {
+            setCcBccLoading(false);
         }
     };
 
@@ -122,7 +155,7 @@ export default function Settings() {
             </Typography>
 
             <Grid container spacing={3}>
-                {/* Gmail SMTP Settings - NEW */}
+                {/* Gmail SMTP Settings */}
                 <Grid item xs={12} md={6}>
                     <Card>
                         <CardContent>
@@ -177,7 +210,68 @@ export default function Settings() {
                             </Button>
                             {smtpData.smtp_email && (
                                 <Alert severity="success" sx={{ mt: 2 }}>
-                                    ✓ Gmail settings configured. You can now send emails directly from Bulk Email page!
+                                    ✓ Gmail settings configured.
+                                </Alert>
+                            )}
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* Default CC/BCC Settings - NEW */}
+                <Grid item xs={12} md={6}>
+                    <Card>
+                        <CardContent>
+                            <Box display="flex" alignItems="center" mb={3}>
+                                <CopyAllIcon sx={{ fontSize: 40, color: '#4caf50', mr: 2 }} />
+                                <Box>
+                                    <Typography variant="h6">Default CC/BCC Settings</Typography>
+                                    <Typography variant="body2" color="textSecondary">
+                                        Set once - auto-filled in all email forms
+                                    </Typography>
+                                </Box>
+                            </Box>
+                            
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                                <strong>Tip:</strong> These will automatically appear in CC/BCC fields when sending emails.
+                                <br />
+                                Separate multiple emails with commas: <code>email1@domain.com, email2@domain.com</code>
+                            </Alert>
+
+                            <TextField
+                                fullWidth
+                                label="Default CC (Carbon Copy)"
+                                multiline
+                                rows={2}
+                                placeholder="cc1@company.com, cc2@company.com"
+                                value={ccBccData.default_cc}
+                                onChange={(e) => setCcBccData({ ...ccBccData, default_cc: e.target.value })}
+                                margin="normal"
+                                helperText="These recipients will receive a copy of every email"
+                            />
+                            <TextField
+                                fullWidth
+                                label="Default BCC (Blind Carbon Copy)"
+                                multiline
+                                rows={2}
+                                placeholder="bcc1@company.com, bcc2@company.com"
+                                value={ccBccData.default_bcc}
+                                onChange={(e) => setCcBccData({ ...ccBccData, default_bcc: e.target.value })}
+                                margin="normal"
+                                helperText="Hidden copies - recipients won't see each other"
+                            />
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={handleSaveDefaultCcBcc}
+                                disabled={ccBccLoading}
+                                sx={{ mt: 2 }}
+                                startIcon={<SaveIcon />}
+                            >
+                                {ccBccLoading ? 'Saving...' : 'Save Default CC/BCC'}
+                            </Button>
+                            {(ccBccData.default_cc || ccBccData.default_bcc) && (
+                                <Alert severity="success" sx={{ mt: 2 }}>
+                                    ✓ Default CC/BCC configured. They will auto-fill in email forms!
                                 </Alert>
                             )}
                         </CardContent>
@@ -379,7 +473,7 @@ export default function Settings() {
                 <Grid item xs={12}>
                     <Alert severity="info">
                         <strong>Security Tip:</strong> Your Gmail App Password is encrypted and stored securely. 
-                        You only need to enter it once. Each team member should use their own Gmail account.
+                        Default CC/BCC will auto-fill in all email forms to save you time.
                     </Alert>
                 </Grid>
             </Grid>

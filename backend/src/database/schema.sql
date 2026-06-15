@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME,
     smtp_email VARCHAR(255),
-    smtp_password VARCHAR(255)
+    smtp_password VARCHAR(255),
+    default_cc TEXT,
+    default_bcc TEXT
 );
 
 -- Contacts Table (Email Addresses)

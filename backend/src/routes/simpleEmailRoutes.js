@@ -5,10 +5,10 @@ import { sendSingleEmail, sendBatchEmails } from '../controllers/simpleEmailCont
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Single email endpoint (with attachment support)
+// Single email endpoint (with attachment and CC/BCC support)
 router.post('/send-single-email', upload.single('attachment'), sendSingleEmail);
 
-// Batch email endpoint (for sending multiple emails with rate limiting)
+// Batch email endpoint (for sending multiple emails with rate limiting and CC/BCC)
 router.post('/send-batch-emails', sendBatchEmails);
 
 export default router;

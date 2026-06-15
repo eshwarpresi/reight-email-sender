@@ -28,6 +28,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy - Required for rate limiter behind Render's proxy
+app.set('trust proxy', 1);
+
 // Security middleware - configure helmet to allow CORS
 app.use(helmet({
     contentSecurityPolicy: false,
@@ -48,7 +51,7 @@ const corsOptions = {
             callback(null, true);
         } else {
             console.log('Blocked origin:', origin);
-            callback(null, true); // Allow all origins temporarily for testing
+            callback(null, false); // Block origins not in list
         }
     },
     credentials: true,

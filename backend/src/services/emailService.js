@@ -7,54 +7,55 @@ import path from 'path';
 class EmailService {
     constructor() {
         this.transporter = null;
-        this.initTransporter();
+        // Don't initialize transporter here - will be created per email with user credentials
     }
 
-    initTransporter() {
-        this.transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST,
-            port: parseInt(process.env.SMTP_PORT),
-            secure: false, // true for 465, false for other ports
+    // Create transporter with user's credentials
+    createTransporter(from_email, from_password) {
+        return nodemailer.createTransport({
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
             auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASSWORD,
+                user: from_email,
+                pass: from_password,
             },
             tls: {
-                rejectUnauthorized: false // Only for development
+                rejectUnauthorized: false
             },
-            pool: true, // Use pooled connections
-            maxConnections: 5,
-            rateDelta: 1000, // 1 second between messages
+            pool: true,
+            maxConnections: 3,
+            rateDelta: 2000,
             rateLimit: true
-        });
-
-        // Verify connection
-        this.transporter.verify((error, success) => {
-            if (error) {
-                logger.error('SMTP connection error:', error);
-            } else {
-                logger.info('SMTP server is ready to send emails');
-            }
         });
     }
 
-    async sendEmail(emailData, queueId, campaignId) {
+    async sendEmail(emailData, queueId, campaignId, userEmail, userPassword) {
         const startTime = Date.now();
+        let transporter = null;
         
         try {
+            // Create transporter with user's credentials
+            transporter = this.createTransporter(userEmail, userPassword);
+            
             // Prepare email options
             const mailOptions = {
-                from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
+                from: userEmail,
                 to: emailData.recipient_email,
                 subject: emailData.subject,
                 html: emailData.content_html || emailData.content,
-                text: emailData.content.replace(/<[^>]*>/g, ''), // Strip HTML for text version
-                headers: {
-                    'X-Campaign-ID': campaignId,
-                    'X-Queue-ID': queueId,
-                    'X-Priority': '1'
-                }
+                text: emailData.content.replace(/<[^>]*>/g, ''),
             };
+
+            // Add CC if provided
+            if (emailData.cc_emails && emailData.cc_emails.length > 0) {
+                mailOptions.cc = emailData.cc_emails;
+            }
+
+            // Add BCC if provided
+            if (emailData.bcc_emails && emailData.bcc_emails.length > 0) {
+                mailOptions.bcc = emailData.bcc_emails;
+            }
 
             // Add attachments if any
             if (emailData.attachments && emailData.attachments.length > 0) {
@@ -75,7 +76,7 @@ class EmailService {
             }
 
             // Send email
-            const info = await this.transporter.sendMail(mailOptions);
+            const info = await transporter.sendMail(mailOptions);
             
             const duration = Date.now() - startTime;
             logger.info(`Email sent successfully to ${emailData.recipient_email}`, {
@@ -103,13 +104,18 @@ class EmailService {
             );
 
             // Update campaign counts
-            await run(
-                `UPDATE campaigns 
-                 SET sent_count = sent_count + 1,
-                     updated_at = datetime('now')
-                 WHERE id = ?`,
-                [campaignId]
-            );
+            if (campaignId) {
+                await run(
+                    `UPDATE campaigns 
+                     SET sent_count = sent_count + 1,
+                         updated_at = datetime('now')
+                     WHERE id = ?`,
+                    [campaignId]
+                );
+            }
+
+            // Close transporter
+            transporter.close();
 
             return {
                 success: true,
@@ -145,13 +151,20 @@ class EmailService {
             );
 
             // Update campaign failed count
-            await run(
-                `UPDATE campaigns 
-                 SET failed_count = failed_count + 1,
-                     updated_at = datetime('now')
-                 WHERE id = ?`,
-                [campaignId]
-            );
+            if (campaignId) {
+                await run(
+                    `UPDATE campaigns 
+                     SET failed_count = failed_count + 1,
+                         updated_at = datetime('now')
+                     WHERE id = ?`,
+                    [campaignId]
+                );
+            }
+
+            // Close transporter if it was created
+            if (transporter) {
+                transporter.close();
+            }
 
             return {
                 success: false,
@@ -161,7 +174,7 @@ class EmailService {
         }
     }
 
-    async sendBulkEmails(campaignId, emails, onProgress) {
+    async sendBulkEmails(campaignId, emails, onProgress, userEmail, userPassword) {
         const results = {
             sent: 0,
             failed: 0,
@@ -170,7 +183,7 @@ class EmailService {
         };
 
         // Process emails with concurrency control
-        const concurrency = parseInt(process.env.MAX_CONCURRENT_EMAILS) || 5;
+        const concurrency = 3; // Send 3 at a time
         const chunks = this.chunkArray(emails, concurrency);
         
         let processed = 0;
@@ -179,7 +192,9 @@ class EmailService {
             const promises = chunk.map(email => this.sendEmail(
                 email,
                 email.queueId,
-                campaignId
+                campaignId,
+                userEmail,
+                userPassword
             ));
             
             const chunkResults = await Promise.all(promises);
@@ -206,34 +221,23 @@ class EmailService {
             
             // Small delay between chunks
             if (chunks.indexOf(chunk) < chunks.length - 1) {
-                await this.delay(1000);
+                await this.delay(2000);
             }
         }
-
-        // Update campaign as completed
-        await run(
-            `UPDATE campaigns 
-             SET status = 'completed',
-                 completed_at = datetime('now'),
-                 updated_at = datetime('now')
-             WHERE id = ?`,
-            [campaignId]
-        );
 
         return results;
     }
 
-    async retryFailedEmails(emailIds) {
+    async retryFailedEmails(emailIds, userEmail, userPassword) {
         const results = [];
         
         for (const emailId of emailIds) {
-            // Get failed email details
             const email = await queryOne(
                 `SELECT eq.*, c.subject, c.content, c.content_html 
                  FROM email_queue eq
-                 JOIN campaigns c ON eq.campaign_id = c.id
-                 WHERE eq.id = ? AND eq.status = 'failed' AND eq.retry_count < ?`,
-                [emailId, parseInt(process.env.RETRY_ATTEMPTS) || 3]
+                 LEFT JOIN campaigns c ON eq.campaign_id = c.id
+                 WHERE eq.id = ? AND eq.status = 'failed'`,
+                [emailId]
             );
             
             if (email) {
@@ -247,7 +251,9 @@ class EmailService {
                         attachments: email.attachments ? JSON.parse(email.attachments) : []
                     },
                     email.id,
-                    email.campaign_id
+                    email.campaign_id,
+                    userEmail,
+                    userPassword
                 );
                 results.push(result);
             }
@@ -268,9 +274,11 @@ class EmailService {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    async testConnection() {
+    async testConnection(from_email, from_password) {
         try {
-            await this.transporter.verify();
+            const transporter = this.createTransporter(from_email, from_password);
+            await transporter.verify();
+            transporter.close();
             return { success: true, message: 'SMTP connection successful' };
         } catch (error) {
             logger.error('SMTP connection test failed:', error);

@@ -10,10 +10,10 @@ class QueueService {
     }
 
     startProcessor() {
-        // Process queue every 5 seconds (faster for better throughput)
+        // Process queue every 3 seconds (faster for better throughput)
         this.processingInterval = setInterval(() => {
             this.processQueue();
-        }, 5000);
+        }, 3000);
         
         logger.info('Email queue processor started - Optimized for bulk sending');
     }
@@ -26,11 +26,11 @@ class QueueService {
         this.isProcessing = true;
         
         try {
-            // Get pending emails - increased limit for better throughput
+            // Get pending emails - including direct sends (campaign_id IS NULL)
             const pendingEmails = await query(
                 `SELECT eq.*, c.subject, c.content, c.content_html 
                  FROM email_queue eq
-                 JOIN campaigns c ON eq.campaign_id = c.id
+                 LEFT JOIN campaigns c ON eq.campaign_id = c.id
                  WHERE eq.status IN ('pending', 'failed')
                  AND eq.retry_count < ?
                  ORDER BY eq.created_at ASC
@@ -42,7 +42,7 @@ class QueueService {
                 return;
             }
 
-            logger.info(`Processing ${pendingEmails.length} pending emails (optimized batch)`);
+            logger.info(`Processing ${pendingEmails.length} pending emails`);
 
             // Process emails with concurrency control (3 at a time)
             const concurrencyLimit = 3;
@@ -66,6 +66,36 @@ class QueueService {
 
     async processEmail(email) {
         try {
+            // Get user's SMTP credentials
+            let userEmail = null;
+            let userPassword = null;
+            
+            // If this is from a campaign, get the user's saved credentials from the campaign
+            if (email.campaign_id) {
+                const campaign = await queryOne(
+                    `SELECT u.smtp_email, u.smtp_password 
+                     FROM campaigns c 
+                     JOIN users u ON c.user_id = u.id 
+                     WHERE c.id = ?`,
+                    [email.campaign_id]
+                );
+                if (campaign) {
+                    userEmail = campaign.smtp_email;
+                    userPassword = campaign.smtp_password;
+                }
+            } else {
+                // For direct sends, we need to get from the email_queue's stored credentials
+                // Since we don't store them, we'll use the default from env
+                userEmail = process.env.SMTP_USER;
+                userPassword = process.env.SMTP_PASSWORD;
+            }
+            
+            // If no user credentials found, use default from env
+            if (!userEmail || !userPassword) {
+                userEmail = process.env.SMTP_USER;
+                userPassword = process.env.SMTP_PASSWORD;
+            }
+            
             const emailData = {
                 recipient_email: email.recipient_email,
                 recipient_name: email.recipient_name,
@@ -80,7 +110,9 @@ class QueueService {
             const result = await emailService.sendEmail(
                 emailData,
                 email.id,
-                email.campaign_id
+                email.campaign_id,
+                userEmail,
+                userPassword
             );
 
             if (result.success) {
@@ -146,15 +178,17 @@ class QueueService {
         for (const email of emails) {
             const result = await run(
                 `INSERT INTO email_queue 
-                 (campaign_id, recipient_email, recipient_name, subject, content, content_html, status, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))`,
+                 (campaign_id, recipient_email, recipient_name, subject, content, content_html, cc_emails, bcc_emails, status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'))`,
                 [
-                    null, // No campaign for direct sends
+                    null,
                     email,
                     null,
                     subject,
                     content,
-                    content
+                    content,
+                    ccEmails,
+                    bccEmails
                 ]
             );
             

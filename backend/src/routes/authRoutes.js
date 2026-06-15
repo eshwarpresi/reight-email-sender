@@ -19,4 +19,8 @@ router.put('/change-password', authenticate, authController.changePassword);
 router.post('/smtp-settings', authenticate, authController.saveSmtpSettings);
 router.get('/smtp-settings', authenticate, authController.getSmtpSettings);
 
+// Default CC/BCC routes
+router.post('/default-cc-bcc', authenticate, authController.saveDefaultCcBcc);
+router.get('/default-cc-bcc', authenticate, authController.getDefaultCcBcc);
+
 export default router;

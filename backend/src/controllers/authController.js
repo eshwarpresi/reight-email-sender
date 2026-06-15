@@ -15,6 +15,8 @@ class AuthController {
         this.createSession = this.createSession.bind(this);
         this.saveSmtpSettings = this.saveSmtpSettings.bind(this);
         this.getSmtpSettings = this.getSmtpSettings.bind(this);
+        this.saveDefaultCcBcc = this.saveDefaultCcBcc.bind(this);
+        this.getDefaultCcBcc = this.getDefaultCcBcc.bind(this);
     }
 
     generateToken(userId) {
@@ -253,6 +255,53 @@ class AuthController {
             res.status(500).json({
                 success: false,
                 message: 'Failed to get SMTP settings'
+            });
+        }
+    }
+
+    async saveDefaultCcBcc(req, res) {
+        try {
+            const { default_cc, default_bcc } = req.body;
+            
+            await run(
+                'UPDATE users SET default_cc = ?, default_bcc = ?, updated_at = datetime("now") WHERE id = ?',
+                [default_cc || '', default_bcc || '', req.user.id]
+            );
+            
+            logger.info(`Default CC/BCC saved for user ${req.user.id}`);
+            
+            res.json({
+                success: true,
+                message: 'Default CC/BCC settings saved successfully'
+            });
+        } catch (error) {
+            logger.error('Save default CC/BCC error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to save default CC/BCC settings'
+            });
+        }
+    }
+
+    async getDefaultCcBcc(req, res) {
+        try {
+            const user = await queryOne(
+                'SELECT default_cc, default_bcc FROM users WHERE id = ?',
+                [req.user.id]
+            );
+            
+            res.json({
+                success: true,
+                data: {
+                    default_cc: user?.default_cc || '',
+                    default_bcc: user?.default_bcc || ''
+                }
+            });
+        } catch (error) {
+            logger.error('Get default CC/BCC error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get default CC/BCC settings'
             });
         }
     }

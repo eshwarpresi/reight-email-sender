@@ -7,26 +7,28 @@ import path from 'path';
 class EmailService {
     constructor() {
         this.transporter = null;
-        // Don't initialize transporter here - will be created per email with user credentials
     }
 
-    // Create transporter with user's credentials
+    // Create transporter with user's credentials - OPTIMIZED FOR PRODUCTION
     createTransporter(from_email, from_password) {
         return nodemailer.createTransport({
             host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
+            port: 465, // Use SSL instead of TLS (more reliable)
+            secure: true, // SSL
             auth: {
                 user: from_email,
                 pass: from_password,
             },
+            connectionTimeout: 90000, // 90 seconds connection timeout
+            greetingTimeout: 90000,
+            socketTimeout: 90000,
             tls: {
-                rejectUnauthorized: false
+                rejectUnauthorized: false,
+                ciphers: 'SSLv3'
             },
-            pool: true,
-            maxConnections: 3,
-            rateDelta: 2000,
-            rateLimit: true
+            pool: false, // Disable pool for better reliability
+            maxConnections: 1,
+            rateDelta: 3000, // 3 seconds between messages
         });
     }
 
@@ -35,6 +37,8 @@ class EmailService {
         let transporter = null;
         
         try {
+            logger.info(`Starting to send email to ${emailData.recipient_email}`);
+            
             // Create transporter with user's credentials
             transporter = this.createTransporter(userEmail, userPassword);
             
@@ -43,7 +47,7 @@ class EmailService {
                 from: userEmail,
                 to: emailData.recipient_email,
                 subject: emailData.subject,
-                html: emailData.content_html || emailData.content,
+                html: emailData.content_html || emailData.content.replace(/\n/g, '<br>'),
                 text: emailData.content.replace(/<[^>]*>/g, ''),
             };
 
@@ -75,8 +79,13 @@ class EmailService {
                 }
             }
 
-            // Send email
-            const info = await transporter.sendMail(mailOptions);
+            // Send email with timeout
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Send timeout after 90 seconds')), 90000);
+            });
+            
+            const info = await Promise.race([sendPromise, timeoutPromise]);
             
             const duration = Date.now() - startTime;
             logger.info(`Email sent successfully to ${emailData.recipient_email}`, {
@@ -114,8 +123,9 @@ class EmailService {
                 );
             }
 
-            // Close transporter
-            transporter.close();
+            if (transporter) {
+                transporter.close();
+            }
 
             return {
                 success: true,
@@ -161,7 +171,6 @@ class EmailService {
                 );
             }
 
-            // Close transporter if it was created
             if (transporter) {
                 transporter.close();
             }
@@ -182,46 +191,39 @@ class EmailService {
             details: []
         };
 
-        // Process emails with concurrency control
-        const concurrency = 3; // Send 3 at a time
-        const chunks = this.chunkArray(emails, concurrency);
-        
+        // Process emails one by one for better reliability
         let processed = 0;
         
-        for (const chunk of chunks) {
-            const promises = chunk.map(email => this.sendEmail(
+        for (const email of emails) {
+            const result = await this.sendEmail(
                 email,
                 email.queueId,
                 campaignId,
                 userEmail,
                 userPassword
-            ));
+            );
             
-            const chunkResults = await Promise.all(promises);
+            if (result.success) {
+                results.sent++;
+            } else {
+                results.failed++;
+            }
+            results.details.push(result);
+            processed++;
             
-            for (const result of chunkResults) {
-                if (result.success) {
-                    results.sent++;
-                } else {
-                    results.failed++;
-                }
-                results.details.push(result);
-                processed++;
-                
-                if (onProgress) {
-                    onProgress({
-                        processed,
-                        total: results.total,
-                        sent: results.sent,
-                        failed: results.failed,
-                        percentage: (processed / results.total) * 100
-                    });
-                }
+            if (onProgress) {
+                onProgress({
+                    processed,
+                    total: results.total,
+                    sent: results.sent,
+                    failed: results.failed,
+                    percentage: (processed / results.total) * 100
+                });
             }
             
-            // Small delay between chunks
-            if (chunks.indexOf(chunk) < chunks.length - 1) {
-                await this.delay(2000);
+            // Delay between emails to avoid rate limiting
+            if (processed < results.total) {
+                await this.delay(3000);
             }
         }
 

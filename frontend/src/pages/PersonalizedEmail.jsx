@@ -26,6 +26,7 @@ import {
     Preview as PreviewIcon,
     Delete as DeleteIcon,
     Add as AddIcon,
+    ContentPaste as ContentPasteIcon,
 } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import * as XLSX from 'xlsx';
@@ -49,8 +50,9 @@ export default function PersonalizedEmail() {
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
     const [sendResults, setSendResults] = useState([]);
+    const [manualInput, setManualInput] = useState('');
 
-    // Advanced email fixing
+    // Advanced email fixing - extracts email from any format
     const fixEmail = (email) => {
         if (!email) return null;
         
@@ -65,6 +67,114 @@ export default function PersonalizedEmail() {
             cleaned = cleaned + '.com';
         }
         return cleaned.toLowerCase();
+    };
+
+    // Extract name from format "Name <email@domain.com>" or "Name email@domain.com"
+    const extractNameFromEmail = (text) => {
+        if (!text) return '';
+        // Remove email part to get name
+        let name = text.replace(/<[^>]*>/g, '').trim();
+        name = name.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '').trim();
+        return name || 'Customer';
+    };
+
+    // Parse manual input - supports formats:
+    // 1. Name, Email (comma separated)
+    // 2. Name\tEmail (tab separated)
+    // 3. Name <email@domain.com>
+    // 4. email@domain.com
+    const parseManualInput = (input) => {
+        if (!input.trim()) return [];
+        
+        const lines = input.split(/\n/);
+        const parsed = [];
+        let hasHeader = false;
+        
+        // Check if first line is a header
+        const firstLine = lines[0]?.toLowerCase() || '';
+        if (firstLine.includes('name') && (firstLine.includes('email') || firstLine.includes('mail'))) {
+            hasHeader = true;
+        }
+        
+        for (let i = (hasHeader ? 1 : 0); i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            
+            let name = '';
+            let email = '';
+            
+            // Try to detect format: Name <email@domain.com>
+            const angleBracketMatch = line.match(/<([^>]+)>/);
+            if (angleBracketMatch) {
+                email = angleBracketMatch[1];
+                name = line.replace(/<[^>]*>/, '').trim();
+            } else {
+                // Try tab or comma separated
+                let parts;
+                if (line.includes('\t')) {
+                    parts = line.split('\t');
+                } else if (line.includes(',')) {
+                    parts = line.split(',');
+                } else {
+                    parts = line.split(/\s{2,}/); // Multiple spaces
+                }
+                
+                if (parts && parts.length >= 2) {
+                    const first = parts[0].trim();
+                    const second = parts[1].trim();
+                    // Check which one is email
+                    if (second.includes('@')) {
+                        name = first;
+                        email = second;
+                    } else if (first.includes('@')) {
+                        name = second;
+                        email = first;
+                    } else {
+                        // Try to find email in the line
+                        const emailMatch = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                        if (emailMatch) {
+                            email = emailMatch[0];
+                            name = extractNameFromEmail(line.replace(email, ''));
+                        }
+                    }
+                } else {
+                    // Single value - try to extract email
+                    const emailMatch = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                    if (emailMatch) {
+                        email = emailMatch[0];
+                        name = extractNameFromEmail(line.replace(email, ''));
+                    }
+                }
+            }
+            
+            // Clean email
+            const fixedEmail = fixEmail(email);
+            if (fixedEmail && fixedEmail.includes('@')) {
+                parsed.push({
+                    name: name || 'Customer',
+                    email: fixedEmail
+                });
+            }
+        }
+        
+        return parsed;
+    };
+
+    const handlePasteManual = () => {
+        if (!manualInput.trim()) {
+            toast.error('Please paste email addresses first');
+            return;
+        }
+        
+        const parsed = parseManualInput(manualInput);
+        if (parsed.length === 0) {
+            toast.error('No valid email addresses found. Please check the format.');
+            return;
+        }
+        
+        setRecipients([...recipients, ...parsed]);
+        setManualInput('');
+        toast.success(`Added ${parsed.length} recipients`);
     };
 
     // Fix all recipients when loaded
@@ -225,7 +335,7 @@ export default function PersonalizedEmail() {
             return;
         }
         if (fixedRecipients.length === 0) {
-            toast.error('No recipients found. Please upload an Excel file or add manually.');
+            toast.error('No recipients found. Please upload an Excel file, paste manually, or add manually.');
             return;
         }
 
@@ -235,15 +345,13 @@ export default function PersonalizedEmail() {
 
         let sent = 0;
         let failed = 0;
-        const batchSize = 5; // Send 5 emails at a time
-        const delayBetweenBatches = 2000; // 2 seconds between batches
+        const batchSize = 5;
+        const delayBetweenBatches = 2000;
 
-        // Process recipients in batches
         for (let i = 0; i < fixedRecipients.length; i += batchSize) {
             const batch = fixedRecipients.slice(i, i + batchSize);
             
-            // Process batch concurrently
-            const batchPromises = batch.map(async (recipient, batchIndex) => {
+            const batchPromises = batch.map(async (recipient) => {
                 const personalizedMessage = template.replace(/{NAME}/g, recipient.name || 'Valued Customer');
                 
                 try {
@@ -258,7 +366,7 @@ export default function PersonalizedEmail() {
 
                     await api.post('/send-single-email', formData, {
                         headers: { 'Content-Type': 'multipart/form-data' },
-                        timeout: 60000 // 60 second timeout for individual emails
+                        timeout: 60000
                     });
                     
                     return { success: true, email: recipient.email, name: recipient.name };
@@ -289,10 +397,8 @@ export default function PersonalizedEmail() {
                 }
             }
             
-            // Update progress
             setProgress(Math.min(((i + batchSize) / fixedRecipients.length) * 100, 100));
             
-            // Delay between batches (except after last batch)
             if (i + batchSize < fixedRecipients.length) {
                 await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
             }
@@ -331,7 +437,7 @@ export default function PersonalizedEmail() {
                     Personalized Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each email is personalized with recipient's name - Optimized for 200+ emails
+                    Each email is personalized with recipient's name - Upload Excel, Paste Manually, or Add One by One
                 </Typography>
 
                 <Stack spacing={3}>
@@ -351,14 +457,11 @@ export default function PersonalizedEmail() {
                     )}
 
                     <Alert severity="info">
-                        <strong>📧 Optimized Bulk Email Features:</strong>
+                        <strong>📧 Add Recipients in Multiple Ways:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
-                            <li>✅ Handles 200+ emails smoothly with batch processing</li>
-                            <li>✅ Sends 5 emails at a time for optimal performance</li>
-                            <li>✅ 2 second delay between batches to respect Gmail limits</li>
-                            <li>✅ <strong>CC:</strong> Carbon Copy - visible to all recipients</li>
-                            <li>✅ <strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
-                            <li>✅ Use <strong>{'{NAME}'}</strong> for personalization</li>
+                            <li>📤 <strong>Upload:</strong> Excel/CSV file with Name, Email columns</li>
+                            <li>📋 <strong>Paste:</strong> Copy-paste from any source (supports multiple formats)</li>
+                            <li>➕ <strong>Add One by One:</strong> Manually add individual recipients</li>
                         </ul>
                     </Alert>
 
@@ -434,15 +537,43 @@ export default function PersonalizedEmail() {
 
                     <Box>
                         <Typography variant="subtitle1" gutterBottom>
-                            Recipients List ({fixedRecipients.length} recipients)
+                            Add Recipients
                         </Typography>
-                        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+
+                        {/* Manual Paste Section - NEW */}
+                        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+                            <Typography variant="subtitle2" gutterBottom>
+                                📋 Paste from Excel/CSV/Email List
+                            </Typography>
+                            <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                                Supports formats: <code>Name, Email</code> or <code>Name &lt;email@domain.com&gt;</code> or just <code>email@domain.com</code>
+                            </Typography>
+                            <TextField
+                                fullWidth
+                                multiline
+                                rows={4}
+                                placeholder="Paste your list here...&#10;PAS, pasfreight@gmail.com&#10;KAVAN, kavan@pasfreight.com&#10;BHARATH &lt;imports@pasfreight.com&gt;&#10;SURESH sureshkumar@pasfreight.com"
+                                value={manualInput}
+                                onChange={(e) => setManualInput(e.target.value)}
+                            />
+                            <Button
+                                variant="contained"
+                                startIcon={<ContentPasteIcon />}
+                                onClick={handlePasteManual}
+                                sx={{ mt: 1 }}
+                                disabled={!manualInput.trim()}
+                            >
+                                Add Pasted Recipients
+                            </Button>
+                        </Paper>
+
+                        <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
                             <Button variant="outlined" component="label" startIcon={<UploadIcon />}>
                                 Upload Excel/CSV
                                 <input type="file" hidden accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
                             </Button>
                             <Button variant="outlined" startIcon={<AddIcon />} onClick={handleAddManually}>
-                                Add Manually
+                                Add One by One
                             </Button>
                             <Button variant="outlined" startIcon={<PreviewIcon />} onClick={handlePreview} disabled={fixedRecipients.length === 0 || !template}>
                                 Preview First 5

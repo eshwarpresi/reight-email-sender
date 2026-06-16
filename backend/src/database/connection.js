@@ -62,11 +62,25 @@ async function initializeDatabase(db) {
 
 async function runMigrations(db) {
     try {
-        // Check if cc_emails column exists in email_queue table
-        const tableInfo = await db.all("PRAGMA table_info(email_queue)");
+        // Check users table for default_cc and default_bcc columns
+        const userTableInfo = await db.all("PRAGMA table_info(users)");
+        const hasDefaultCc = userTableInfo.some(col => col.name === 'default_cc');
+        const hasDefaultBcc = userTableInfo.some(col => col.name === 'default_bcc');
         
-        const hasCcEmails = tableInfo.some(col => col.name === 'cc_emails');
-        const hasBccEmails = tableInfo.some(col => col.name === 'bcc_emails');
+        if (!hasDefaultCc) {
+            console.log('Adding default_cc column to users table...');
+            await db.exec('ALTER TABLE users ADD COLUMN default_cc TEXT');
+        }
+        
+        if (!hasDefaultBcc) {
+            console.log('Adding default_bcc column to users table...');
+            await db.exec('ALTER TABLE users ADD COLUMN default_bcc TEXT');
+        }
+        
+        // Check email_queue table for cc_emails and bcc_emails columns
+        const queueTableInfo = await db.all("PRAGMA table_info(email_queue)");
+        const hasCcEmails = queueTableInfo.some(col => col.name === 'cc_emails');
+        const hasBccEmails = queueTableInfo.some(col => col.name === 'bcc_emails');
         
         if (!hasCcEmails) {
             console.log('Adding cc_emails column to email_queue...');

@@ -137,6 +137,7 @@ directories.forEach(dir => {
 
 // Start server
 let server;
+let queueInterval;
 
 async function startServer() {
     try {
@@ -152,16 +153,34 @@ async function startServer() {
             logger.info(`CORS enabled for all origins`);
         });
         
-        // FORCE QUEUE PROCESSOR TO START
-        console.log('🔧 Manually triggering queue processor...');
+        // FORCE QUEUE PROCESSOR TO START - IMMEDIATELY
+        console.log('🔧 Starting queue processor...');
+        
+        // First check after 3 seconds
         setTimeout(async () => {
+            console.log('⏰ First queue check...');
             try {
                 await queueService.processQueue();
-                console.log('✅ Queue processor triggered successfully');
+                console.log('✅ First queue check completed');
             } catch (error) {
-                console.error('❌ Queue processor trigger failed:', error.message);
+                console.error('❌ First queue check failed:', error.message);
             }
         }, 3000);
+        
+        // CONTINUOUS QUEUE PROCESSING - Check every 10 seconds
+        queueInterval = setInterval(async () => {
+            try {
+                const pending = await queueService.getPendingCount();
+                if (pending > 0) {
+                    console.log(`📧 ${pending} emails pending, processing...`);
+                    await queueService.processQueue();
+                }
+            } catch (error) {
+                console.error('❌ Queue interval error:', error.message);
+            }
+        }, 10000);
+        
+        console.log('✅ Queue processor scheduled to run every 10 seconds');
         
         // Graceful shutdown
         process.on('SIGTERM', gracefulShutdown);
@@ -175,6 +194,12 @@ async function startServer() {
 
 async function gracefulShutdown() {
     logger.info('Received shutdown signal, closing gracefully...');
+    
+    // Clear queue interval
+    if (queueInterval) {
+        clearInterval(queueInterval);
+        queueInterval = null;
+    }
     
     if (server) {
         server.close(async () => {

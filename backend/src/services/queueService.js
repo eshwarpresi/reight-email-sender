@@ -4,25 +4,30 @@ import emailService from './emailService.js';
 
 class QueueService {
     constructor() {
+        console.log('🔧 QueueService: Constructor called');
         this.isProcessing = false;
         this.processingInterval = null;
         this.startProcessor();
     }
 
     startProcessor() {
-        // Process queue every 3 seconds (faster for better throughput)
+        console.log('▶️ QueueService: Starting processor...');
+        // Process queue every 5 seconds
         this.processingInterval = setInterval(() => {
             this.processQueue();
-        }, 3000);
+        }, 5000);
         
         logger.info('Email queue processor started - Optimized for bulk sending');
+        console.log('✅ QueueService: Processor started successfully');
     }
 
     async processQueue() {
         if (this.isProcessing) {
+            console.log('⏸️ QueueService: Already processing, skipping...');
             return;
         }
 
+        console.log('🔄 QueueService: Processing queue...');
         this.isProcessing = true;
         
         try {
@@ -39,39 +44,45 @@ class QueueService {
             );
 
             if (pendingEmails.length === 0) {
+                console.log('📭 QueueService: No pending emails');
                 return;
             }
 
+            console.log(`📧 QueueService: Processing ${pendingEmails.length} pending emails`);
             logger.info(`Processing ${pendingEmails.length} pending emails`);
 
-            // Process emails with concurrency control (3 at a time)
-            const concurrencyLimit = 3;
-            for (let i = 0; i < pendingEmails.length; i += concurrencyLimit) {
-                const batch = pendingEmails.slice(i, i + concurrencyLimit);
-                const promises = batch.map(email => this.processEmail(email));
-                await Promise.all(promises);
+            // Process emails one by one for better reliability
+            for (let i = 0; i < pendingEmails.length; i++) {
+                const email = pendingEmails[i];
+                console.log(`📨 QueueService: Sending to ${email.recipient_email}`);
+                await this.processEmail(email);
                 
-                // Small delay between batches to respect Gmail limits
-                if (i + concurrencyLimit < pendingEmails.length) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                // Delay between emails
+                if (i < pendingEmails.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                 }
             }
 
         } catch (error) {
+            console.error('❌ QueueService: Queue processing error:', error);
             logger.error('Queue processing error:', error);
         } finally {
             this.isProcessing = false;
+            console.log('✅ QueueService: Queue processing complete');
         }
     }
 
     async processEmail(email) {
         try {
+            console.log(`🔍 QueueService: Processing email ID ${email.id} to ${email.recipient_email}`);
+            
             // Get user's SMTP credentials
             let userEmail = null;
             let userPassword = null;
             
             // If this is from a campaign, get the user's saved credentials from the campaign
             if (email.campaign_id) {
+                console.log(`📋 QueueService: Getting credentials for campaign ${email.campaign_id}`);
                 const campaign = await queryOne(
                     `SELECT u.smtp_email, u.smtp_password 
                      FROM campaigns c 
@@ -82,19 +93,27 @@ class QueueService {
                 if (campaign) {
                     userEmail = campaign.smtp_email;
                     userPassword = campaign.smtp_password;
+                    console.log(`✅ QueueService: Found user credentials from campaign`);
                 }
             } else {
-                // For direct sends, we need to get from the email_queue's stored credentials
-                // Since we don't store them, we'll use the default from env
+                console.log(`📋 QueueService: Direct send - using default SMTP credentials`);
                 userEmail = process.env.SMTP_USER;
                 userPassword = process.env.SMTP_PASSWORD;
             }
             
             // If no user credentials found, use default from env
             if (!userEmail || !userPassword) {
+                console.log(`⚠️ QueueService: No user credentials, using environment defaults`);
                 userEmail = process.env.SMTP_USER;
                 userPassword = process.env.SMTP_PASSWORD;
             }
+            
+            if (!userEmail || !userPassword) {
+                console.error(`❌ QueueService: No SMTP credentials available!`);
+                throw new Error('SMTP credentials not configured. Please save your Gmail settings.');
+            }
+            
+            console.log(`📧 QueueService: Sending via ${userEmail}`);
             
             const emailData = {
                 recipient_email: email.recipient_email,
@@ -116,14 +135,17 @@ class QueueService {
             );
 
             if (result.success) {
+                console.log(`✅ QueueService: Email sent successfully to ${email.recipient_email}`);
                 logger.info(`Email sent successfully to ${email.recipient_email}`);
             } else {
+                console.error(`❌ QueueService: Failed to send to ${email.recipient_email}: ${result.error}`);
                 logger.error(`Failed to send to ${email.recipient_email}: ${result.error}`);
             }
 
             return result;
 
         } catch (error) {
+            console.error(`❌ QueueService: Error processing email ${email.id}:`, error);
             logger.error(`Error processing email ${email.id}:`, error);
             
             await run(
@@ -140,6 +162,7 @@ class QueueService {
     }
 
     async addToQueue(campaignId, recipients, subject, content, contentHtml, attachments, ccEmails = '', bccEmails = '') {
+        console.log(`📝 QueueService: Adding ${recipients.length} emails to queue for campaign ${campaignId}`);
         const queueItems = [];
         
         for (const recipient of recipients) {
@@ -165,6 +188,7 @@ class QueueService {
         }
         
         logger.info(`Added ${queueItems.length} emails to queue for campaign ${campaignId}`);
+        console.log(`✅ QueueService: Added ${queueItems.length} emails to queue`);
         
         // Trigger immediate processing
         this.processQueue();
@@ -173,6 +197,7 @@ class QueueService {
     }
 
     async addDirectToQueue(emails, fromEmail, fromPassword, subject, content, ccEmails = '', bccEmails = '') {
+        console.log(`📝 QueueService: Adding ${emails.length} direct emails to queue`);
         const queueItems = [];
         
         for (const email of emails) {
@@ -199,6 +224,7 @@ class QueueService {
         }
         
         logger.info(`Added ${queueItems.length} direct emails to queue`);
+        console.log(`✅ QueueService: Added ${queueItems.length} direct emails to queue`);
         this.processQueue();
         
         return queueItems;
@@ -262,6 +288,7 @@ class QueueService {
         const result = await queryOne(
             `SELECT COUNT(*) as count FROM email_queue WHERE status = 'pending'`
         );
+        console.log(`📊 QueueService: ${result?.count || 0} emails pending`);
         return result?.count || 0;
     }
 
@@ -270,6 +297,7 @@ class QueueService {
             clearInterval(this.processingInterval);
             this.processingInterval = null;
             logger.info('Email queue processor stopped');
+            console.log('🛑 QueueService: Processor stopped');
         }
     }
 }

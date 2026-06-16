@@ -31,6 +31,7 @@ import {
     ArrowForward as ArrowForwardIcon,
     CheckCircleOutline as CheckCircleOutlineIcon,
 } from '@mui/icons-material';
+import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -136,7 +137,7 @@ export default function Login() {
     };
 
     const handleSocialLogin = (provider) => {
-        toast.info(`${provider} login coming soon!`);
+        toast.info(`🔜 ${provider} login coming soon! Stay tuned.`);
     };
 
     return (

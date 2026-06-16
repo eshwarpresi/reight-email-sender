@@ -44,10 +44,7 @@ const allowedOrigins = process.env.CORS_ORIGIN
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, etc)
         if (!origin) return callback(null, true);
-        
-        // Allow all origins for now to fix CORS
         callback(null, true);
     },
     credentials: true,
@@ -57,8 +54,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
 app.options('*', cors(corsOptions));
 
 // Compression
@@ -157,6 +152,17 @@ async function startServer() {
             logger.info(`CORS enabled for all origins`);
         });
         
+        // FORCE QUEUE PROCESSOR TO START
+        console.log('🔧 Manually triggering queue processor...');
+        setTimeout(async () => {
+            try {
+                await queueService.processQueue();
+                console.log('✅ Queue processor triggered successfully');
+            } catch (error) {
+                console.error('❌ Queue processor trigger failed:', error.message);
+            }
+        }, 3000);
+        
         // Graceful shutdown
         process.on('SIGTERM', gracefulShutdown);
         process.on('SIGINT', gracefulShutdown);
@@ -170,22 +176,15 @@ async function startServer() {
 async function gracefulShutdown() {
     logger.info('Received shutdown signal, closing gracefully...');
     
-    // Stop accepting new requests
     if (server) {
         server.close(async () => {
             logger.info('HTTP server closed');
-            
-            // Stop queue processor
             queueService.stopProcessor();
-            
-            // Close database connection
             await closeDatabase();
             logger.info('Database connection closed');
-            
             process.exit(0);
         });
         
-        // Force close after 10 seconds
         setTimeout(() => {
             logger.error('Could not close connections in time, forcefully shutting down');
             process.exit(1);

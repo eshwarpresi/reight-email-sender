@@ -33,7 +33,6 @@ export default function SimpleEmail() {
     const [hasSavedSettings, setHasSavedSettings] = useState(false);
     const [showCredentials, setShowCredentials] = useState(false);
     const [fixedEmails, setFixedEmails] = useState([]);
-    const [isSending, setIsSending] = useState(false);
     const [sentCount, setSentCount] = useState(0);
     const [failedCount, setFailedCount] = useState(0);
 
@@ -117,7 +116,6 @@ export default function SimpleEmail() {
 
         setFixedEmails(allEmails);
         setLoading(true);
-        setIsSending(true);
         setProgress(0);
         setResults([]);
         setSentCount(0);
@@ -126,7 +124,7 @@ export default function SimpleEmail() {
         let sent = 0;
         let failed = 0;
 
-        // Send emails one by one with delay (like Personalized Email)
+        // Send emails one by one with delay (DIRECT SENDING - no queue)
         for (let i = 0; i < allEmails.length; i++) {
             const email = allEmails[i];
             
@@ -143,15 +141,23 @@ export default function SimpleEmail() {
                     formDataToSend.append('attachment', attachment);
                 }
 
-                await api.post('/send-single-email', formDataToSend, {
+                // Direct send - NOT using queue
+                const response = await api.post('/send-single-email-direct', formDataToSend, {
                     headers: { 'Content-Type': 'multipart/form-data' },
                     timeout: 60000
                 });
                 
-                sent++;
-                setSentCount(sent);
-                setResults(prev => [...prev, { email, status: 'sent' }]);
-                toast.success(`✅ Sent to ${email}`);
+                if (response.data.success) {
+                    sent++;
+                    setSentCount(sent);
+                    setResults(prev => [...prev, { email, status: 'sent' }]);
+                    toast.success(`✅ Sent to ${email}`);
+                } else {
+                    failed++;
+                    setFailedCount(failed);
+                    setResults(prev => [...prev, { email, status: 'failed', error: response.data.message || 'Failed' }]);
+                    toast.error(`❌ Failed to send to ${email}`);
+                }
             } catch (error) {
                 failed++;
                 setFailedCount(failed);
@@ -163,14 +169,13 @@ export default function SimpleEmail() {
             // Update progress
             setProgress(((i + 1) / allEmails.length) * 100);
             
-            // Delay between emails (2 seconds) - like Personalized Email
+            // Delay between emails (2 seconds)
             if (i < allEmails.length - 1) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
 
         setLoading(false);
-        setIsSending(false);
         
         if (failed === 0) {
             toast.success(`🎉 Success! All ${sent} emails sent successfully!`);

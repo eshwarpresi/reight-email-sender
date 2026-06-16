@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { 
     sendSingleEmail, 
+    sendSingleEmailDirect,
     sendBatchEmails, 
     getQueueStatus, 
     retryFailedEmails 
@@ -11,7 +12,10 @@ import queueService from '../services/queueService.js';
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Email sending endpoints
+// DIRECT SEND - Bypasses queue (like Personalized Email)
+router.post('/send-single-email-direct', upload.single('attachment'), sendSingleEmailDirect);
+
+// Queue-based send
 router.post('/send-single-email', upload.single('attachment'), sendSingleEmail);
 router.post('/send-batch-emails', sendBatchEmails);
 

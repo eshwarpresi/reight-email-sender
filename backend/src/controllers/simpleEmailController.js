@@ -79,16 +79,88 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// Batch send - NOW USING QUEUE SYSTEM (NO TIMEOUT)
+// DIRECT SEND - Bypasses queue (like Personalized Email)
+export const sendSingleEmailDirect = async (req, res) => {
+    try {
+        let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
+        const attachment = req.file;
+
+        const cleanedEmail = cleanEmail(to_email);
+        
+        if (!isValidEmail(cleanedEmail)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid email format: ${to_email}`
+            });
+        }
+
+        // Clean CC and BCC emails
+        const ccList = cleanMultipleEmails(cc_emails);
+        const bccList = cleanMultipleEmails(bcc_emails);
+
+        // Create transporter
+        const transporter = nodemailer.createTransport({
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
+            auth: {
+                user: from_email,
+                pass: from_password,
+            },
+            connectionTimeout: 90000,
+            greetingTimeout: 90000,
+            socketTimeout: 90000,
+            tls: {
+                rejectUnauthorized: false,
+                ciphers: 'SSLv3'
+            },
+        });
+
+        const mailOptions = {
+            from: from_email,
+            to: cleanedEmail,
+            subject: subject,
+            html: content.replace(/\n/g, '<br>'),
+            text: content.replace(/<[^>]*>/g, ''),
+        };
+
+        if (ccList.length > 0) mailOptions.cc = ccList.join(', ');
+        if (bccList.length > 0) mailOptions.bcc = bccList.join(', ');
+
+        if (attachment) {
+            mailOptions.attachments = [{
+                filename: attachment.originalname,
+                content: attachment.buffer,
+            }];
+        }
+
+        await transporter.sendMail(mailOptions);
+        transporter.close();
+
+        logger.info(`Email sent directly to ${cleanedEmail}`);
+        
+        res.json({
+            success: true,
+            message: `Email sent to ${cleanedEmail}`
+        });
+
+    } catch (error) {
+        logger.error('Direct send error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// Batch send - USING QUEUE SYSTEM
 export const sendBatchEmails = async (req, res) => {
     try {
         const { from_email, from_password, recipients, cc_emails, bcc_emails, subject, content } = req.body;
         
-        // Clean CC and BCC emails
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
         
-        // Validate all recipient emails
         const validRecipients = [];
         const invalidRecipients = [];
         
@@ -108,7 +180,6 @@ export const sendBatchEmails = async (req, res) => {
             });
         }
 
-        // Add ALL emails to queue system (NOT sending directly!)
         const queueItems = [];
         for (const recipient of validRecipients) {
             const personalizedContent = content.replace(/{NAME}/g, recipient.name || 'Valued Customer');

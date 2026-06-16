@@ -13,22 +13,22 @@ class EmailService {
     createTransporter(from_email, from_password) {
         return nodemailer.createTransport({
             host: 'smtp.gmail.com',
-            port: 465, // Use SSL instead of TLS (more reliable)
-            secure: true, // SSL
+            port: 465,
+            secure: true,
             auth: {
                 user: from_email,
                 pass: from_password,
             },
-            connectionTimeout: 90000, // 90 seconds connection timeout
+            connectionTimeout: 90000,
             greetingTimeout: 90000,
             socketTimeout: 90000,
             tls: {
                 rejectUnauthorized: false,
                 ciphers: 'SSLv3'
             },
-            pool: false, // Disable pool for better reliability
+            pool: false,
             maxConnections: 1,
-            rateDelta: 3000, // 3 seconds between messages
+            rateDelta: 3000,
         });
     }
 
@@ -42,13 +42,16 @@ class EmailService {
             // Create transporter with user's credentials
             transporter = this.createTransporter(userEmail, userPassword);
             
-            // Prepare email options
+            // Prepare email options with null safety
+            const content = emailData.content || '';
+            const contentHtml = emailData.content_html || content;
+            
             const mailOptions = {
                 from: userEmail,
                 to: emailData.recipient_email,
-                subject: emailData.subject,
-                html: emailData.content_html || emailData.content.replace(/\n/g, '<br>'),
-                text: emailData.content.replace(/<[^>]*>/g, ''),
+                subject: emailData.subject || 'No Subject',
+                html: contentHtml.replace(/\n/g, '<br>'),
+                text: content.replace(/<[^>]*>/g, ''),
             };
 
             // Add CC if provided
@@ -191,7 +194,6 @@ class EmailService {
             details: []
         };
 
-        // Process emails one by one for better reliability
         let processed = 0;
         
         for (const email of emails) {
@@ -221,7 +223,6 @@ class EmailService {
                 });
             }
             
-            // Delay between emails to avoid rate limiting
             if (processed < results.total) {
                 await this.delay(3000);
             }

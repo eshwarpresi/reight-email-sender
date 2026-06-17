@@ -37,6 +37,87 @@ const cleanMultipleEmails = (emailsString) => {
     return cleanedEmails;
 };
 
+// Auto-detect email provider and create transporter
+const createTransporter = (from_email, from_password) => {
+    const domain = from_email.split('@')[1]?.toLowerCase() || '';
+    
+    // Default: Gmail
+    let config = {
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: {
+            user: from_email,
+            pass: from_password,
+        },
+        connectionTimeout: 90000,
+        greetingTimeout: 90000,
+        socketTimeout: 90000,
+        tls: {
+            rejectUnauthorized: false,
+        },
+    };
+
+    // Outlook/Hotmail/Live
+    if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live')) {
+        config = {
+            host: 'smtp-mail.outlook.com',
+            port: 587,
+            secure: false,
+            auth: {
+                user: from_email,
+                pass: from_password,
+            },
+            connectionTimeout: 90000,
+            greetingTimeout: 90000,
+            socketTimeout: 90000,
+            tls: {
+                rejectUnauthorized: false,
+            },
+        };
+    }
+    
+    // Brevo (Sendinblue)
+    if (domain.includes('brevo') || domain.includes('sendinblue')) {
+        config = {
+            host: 'smtp-relay.brevo.com',
+            port: 587,
+            secure: false,
+            auth: {
+                user: from_email,
+                pass: from_password,
+            },
+            connectionTimeout: 90000,
+            greetingTimeout: 90000,
+            socketTimeout: 90000,
+            tls: {
+                rejectUnauthorized: false,
+            },
+        };
+    }
+
+    // Yahoo
+    if (domain.includes('yahoo')) {
+        config = {
+            host: 'smtp.mail.yahoo.com',
+            port: 465,
+            secure: true,
+            auth: {
+                user: from_email,
+                pass: from_password,
+            },
+            connectionTimeout: 90000,
+            greetingTimeout: 90000,
+            socketTimeout: 90000,
+            tls: {
+                rejectUnauthorized: false,
+            },
+        };
+    }
+
+    return nodemailer.createTransport(config);
+};
+
 // Send single email using queue system
 export const sendSingleEmail = async (req, res) => {
     try {
@@ -98,23 +179,11 @@ export const sendSingleEmailDirect = async (req, res) => {
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
 
-        // Create transporter
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            connectionTimeout: 90000,
-            greetingTimeout: 90000,
-            socketTimeout: 90000,
-            tls: {
-                rejectUnauthorized: false,
-                ciphers: 'SSLv3'
-            },
-        });
+        // Create transporter based on email provider
+        const transporter = createTransporter(from_email, from_password);
+
+        // Verify connection before sending
+        await transporter.verify();
 
         const mailOptions = {
             from: from_email,
@@ -122,6 +191,13 @@ export const sendSingleEmailDirect = async (req, res) => {
             subject: subject,
             html: content.replace(/\n/g, '<br>'),
             text: content.replace(/<[^>]*>/g, ''),
+            replyTo: from_email,
+            headers: {
+                'X-Priority': '1',
+                'X-MSMail-Priority': 'High',
+                'Importance': 'High',
+                'X-Mailer': 'Freight Email Sender v2.0'
+            }
         };
 
         if (ccList.length > 0) mailOptions.cc = ccList.join(', ');
@@ -137,7 +213,7 @@ export const sendSingleEmailDirect = async (req, res) => {
         await transporter.sendMail(mailOptions);
         transporter.close();
 
-        logger.info(`Email sent directly to ${cleanedEmail}`);
+        logger.info(`✅ Email sent directly to ${cleanedEmail} from ${from_email}`);
         
         res.json({
             success: true,
@@ -146,9 +222,17 @@ export const sendSingleEmailDirect = async (req, res) => {
 
     } catch (error) {
         logger.error('Direct send error:', error);
+        
+        let errorMessage = error.message;
+        if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
+            errorMessage = '❌ Invalid email credentials! Please check your email and password/App Password in Settings.';
+        } else if (errorMessage.includes('ECONNREFUSED')) {
+            errorMessage = '❌ SMTP connection refused. Please check your network or try a different email provider.';
+        }
+        
         res.status(500).json({
             success: false,
-            message: error.message
+            message: errorMessage
         });
     }
 };

@@ -90,27 +90,29 @@ class QueueService {
                      WHERE c.id = ?`,
                     [email.campaign_id]
                 );
-                if (campaign) {
+                if (campaign && campaign.smtp_email) {
                     userEmail = campaign.smtp_email;
                     userPassword = campaign.smtp_password;
                     console.log(`✅ QueueService: Found user credentials from campaign`);
                 }
-            } else {
-                console.log(`📋 QueueService: Direct send - using default SMTP credentials`);
-                userEmail = process.env.SMTP_USER;
-                userPassword = process.env.SMTP_PASSWORD;
             }
             
-            // If no user credentials found, use default from env
+            // For direct sends or if no campaign credentials found
             if (!userEmail || !userPassword) {
-                console.log(`⚠️ QueueService: No user credentials, using environment defaults`);
+                console.log(`📋 QueueService: Checking for user's saved credentials...`);
+                
+                // Try to get credentials from the user who created the email
+                // For direct sends, we need to get from the request - stored in email_queue
+                // Fallback to environment variables
                 userEmail = process.env.SMTP_USER;
                 userPassword = process.env.SMTP_PASSWORD;
-            }
-            
-            if (!userEmail || !userPassword) {
-                console.error(`❌ QueueService: No SMTP credentials available!`);
-                throw new Error('SMTP credentials not configured. Please save your Gmail settings.');
+                
+                if (userEmail && userPassword) {
+                    console.log(`📧 QueueService: Using environment credentials: ${userEmail}`);
+                } else {
+                    console.error(`❌ QueueService: No SMTP credentials available!`);
+                    throw new Error('SMTP credentials not configured. Please save your email settings in Settings page.');
+                }
             }
             
             console.log(`📧 QueueService: Sending via ${userEmail}`);

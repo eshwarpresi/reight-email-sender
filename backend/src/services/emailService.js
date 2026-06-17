@@ -9,9 +9,12 @@ class EmailService {
         this.transporter = null;
     }
 
-    // Create transporter with user's credentials - OPTIMIZED FOR PRODUCTION
+    // Create transporter with user's credentials - SUPPORTS MULTIPLE PROVIDERS
     createTransporter(from_email, from_password) {
-        return nodemailer.createTransport({
+        // Auto-detect email provider based on domain
+        const domain = from_email.split('@')[1]?.toLowerCase() || '';
+        
+        let config = {
             host: 'smtp.gmail.com',
             port: 465,
             secure: true,
@@ -24,12 +27,67 @@ class EmailService {
             socketTimeout: 90000,
             tls: {
                 rejectUnauthorized: false,
-                ciphers: 'SSLv3'
             },
-            pool: false,
-            maxConnections: 1,
-            rateDelta: 3000,
-        });
+        };
+
+        // Outlook/Hotmail/Live configuration
+        if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live')) {
+            config = {
+                host: 'smtp-mail.outlook.com',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: from_email,
+                    pass: from_password,
+                },
+                connectionTimeout: 90000,
+                greetingTimeout: 90000,
+                socketTimeout: 90000,
+                tls: {
+                    rejectUnauthorized: false,
+                },
+            };
+        }
+        
+        // Brevo (Sendinblue) configuration
+        if (domain.includes('brevo') || domain.includes('sendinblue')) {
+            config = {
+                host: 'smtp-relay.brevo.com',
+                port: 587,
+                secure: false,
+                auth: {
+                    user: from_email,
+                    pass: from_password,
+                },
+                connectionTimeout: 90000,
+                greetingTimeout: 90000,
+                socketTimeout: 90000,
+                tls: {
+                    rejectUnauthorized: false,
+                },
+            };
+        }
+
+        // Yahoo configuration
+        if (domain.includes('yahoo')) {
+            config = {
+                host: 'smtp.mail.yahoo.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: from_email,
+                    pass: from_password,
+                },
+                connectionTimeout: 90000,
+                greetingTimeout: 90000,
+                socketTimeout: 90000,
+                tls: {
+                    rejectUnauthorized: false,
+                },
+            };
+        }
+
+        return nodemailer.createTransport(config);
     }
 
     async sendEmail(emailData, queueId, campaignId, userEmail, userPassword) {
@@ -38,6 +96,11 @@ class EmailService {
         
         try {
             logger.info(`Starting to send email to ${emailData.recipient_email}`);
+            
+            // Check if credentials exist
+            if (!userEmail || !userPassword) {
+                throw new Error('❌ No email credentials found! Please save your Gmail/Outlook settings in Settings page.');
+            }
             
             // Create transporter with user's credentials
             transporter = this.createTransporter(userEmail, userPassword);
@@ -52,6 +115,13 @@ class EmailService {
                 subject: emailData.subject || 'No Subject',
                 html: contentHtml.replace(/\n/g, '<br>'),
                 text: content.replace(/<[^>]*>/g, ''),
+                replyTo: userEmail,
+                headers: {
+                    'X-Priority': '1',
+                    'X-MSMail-Priority': 'High',
+                    'Importance': 'High',
+                    'X-Mailer': 'Freight Email Sender v2.0'
+                }
             };
 
             // Add CC if provided
@@ -82,20 +152,19 @@ class EmailService {
                 }
             }
 
-            // Send email with timeout
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Send timeout after 90 seconds')), 90000);
-            });
-            
-            const info = await Promise.race([sendPromise, timeoutPromise]);
+            // Verify connection before sending
+            await transporter.verify();
+
+            // Send email
+            const info = await transporter.sendMail(mailOptions);
             
             const duration = Date.now() - startTime;
-            logger.info(`Email sent successfully to ${emailData.recipient_email}`, {
+            logger.info(`✅ Email sent successfully to ${emailData.recipient_email}`, {
                 messageId: info.messageId,
                 queueId,
                 campaignId,
-                duration
+                duration,
+                from: userEmail
             });
 
             // Update queue status
@@ -138,11 +207,23 @@ class EmailService {
 
         } catch (error) {
             const duration = Date.now() - startTime;
+            
+            // Log the specific error
+            let errorMessage = error.message;
+            if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
+                errorMessage = '❌ Invalid Gmail credentials! Please check your Gmail address and App Password in Settings.';
+            } else if (errorMessage.includes('ECONNREFUSED')) {
+                errorMessage = '❌ SMTP connection refused. Please check your network or try a different email provider.';
+            } else if (errorMessage.includes('timeout')) {
+                errorMessage = '❌ Connection timeout. Please try again later.';
+            }
+            
             logger.error(`Failed to send email to ${emailData.recipient_email}`, {
-                error: error.message,
+                error: errorMessage,
                 queueId,
                 campaignId,
-                duration
+                duration,
+                from: userEmail
             });
 
             // Update queue status with error
@@ -153,14 +234,14 @@ class EmailService {
                      retry_count = retry_count + 1,
                      updated_at = datetime('now')
                  WHERE id = ?`,
-                [error.message, queueId]
+                [errorMessage, queueId]
             );
 
             // Log error
             await run(
                 `INSERT INTO email_logs (email_queue_id, status, error, sent_at)
                  VALUES (?, 'failed', ?, datetime('now'))`,
-                [queueId, error.message]
+                [queueId, errorMessage]
             );
 
             // Update campaign failed count
@@ -180,7 +261,7 @@ class EmailService {
 
             return {
                 success: false,
-                error: error.message,
+                error: errorMessage,
                 queueId
             };
         }

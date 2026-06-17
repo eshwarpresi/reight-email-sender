@@ -14,6 +14,7 @@ class EmailService {
         // Auto-detect email provider based on domain
         const domain = from_email.split('@')[1]?.toLowerCase() || '';
         
+        // Default: Gmail (including Google Workspace custom domains)
         let config = {
             host: 'smtp.gmail.com',
             port: 465,
@@ -29,6 +30,30 @@ class EmailService {
                 rejectUnauthorized: false,
             },
         };
+
+        // Gmail and Google Workspace domains (including custom domains like pasfreight.com)
+        const gmailDomains = ['gmail.com', 'googlemail.com', 'pasfreight.com'];
+        if (gmailDomains.some(d => domain === d)) {
+            config = {
+                host: 'smtp.gmail.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: from_email,
+                    pass: from_password,
+                },
+                connectionTimeout: 90000,
+                greetingTimeout: 90000,
+                socketTimeout: 90000,
+                tls: {
+                    rejectUnauthorized: false,
+                    ciphers: 'SSLv3'
+                },
+                pool: false,
+                maxConnections: 1,
+                rateDelta: 3000,
+            };
+        }
 
         // Outlook/Hotmail/Live configuration
         if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live')) {
@@ -99,11 +124,14 @@ class EmailService {
             
             // Check if credentials exist
             if (!userEmail || !userPassword) {
-                throw new Error('❌ No email credentials found! Please save your Gmail/Outlook settings in Settings page.');
+                throw new Error('❌ No email credentials found! Please save your email settings in Settings page.');
             }
             
             // Create transporter with user's credentials
             transporter = this.createTransporter(userEmail, userPassword);
+            
+            // Verify connection before sending
+            await transporter.verify();
             
             // Prepare email options with null safety
             const content = emailData.content || '';
@@ -151,9 +179,6 @@ class EmailService {
                     }
                 }
             }
-
-            // Verify connection before sending
-            await transporter.verify();
 
             // Send email
             const info = await transporter.sendMail(mailOptions);
@@ -211,11 +236,13 @@ class EmailService {
             // Log the specific error
             let errorMessage = error.message;
             if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-                errorMessage = '❌ Invalid Gmail credentials! Please check your Gmail address and App Password in Settings.';
+                errorMessage = '❌ Invalid email credentials! Please check your email and App Password in Settings.';
             } else if (errorMessage.includes('ECONNREFUSED')) {
-                errorMessage = '❌ SMTP connection refused. Please check your network or try a different email provider.';
+                errorMessage = '❌ SMTP connection refused. Please check your network.';
             } else if (errorMessage.includes('timeout')) {
                 errorMessage = '❌ Connection timeout. Please try again later.';
+            } else if (errorMessage.includes('verify')) {
+                errorMessage = '❌ SMTP verification failed. Please check your email credentials.';
             }
             
             logger.error(`Failed to send email to ${emailData.recipient_email}`, {

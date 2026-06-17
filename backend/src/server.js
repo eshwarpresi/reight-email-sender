@@ -153,10 +153,11 @@ async function startServer() {
             logger.info(`CORS enabled for all origins`);
         });
         
-        // FORCE QUEUE PROCESSOR TO START - IMMEDIATELY
+        // Start queue processor for Render/local
         console.log('🔧 Starting queue processor...');
+        queueService.startProcessor();
         
-        // First check after 3 seconds
+        // First queue check after 3 seconds
         setTimeout(async () => {
             console.log('⏰ First queue check...');
             try {

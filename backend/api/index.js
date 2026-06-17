@@ -21,16 +21,21 @@ app.use(helmet({
 app.use(cors({
     origin: process.env.CORS_ORIGIN || '*',
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Handle OPTIONS requests
+app.options('*', cors());
 
 // Health check endpoint (before database)
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'healthy', 
         timestamp: new Date().toISOString(),
-        message: 'Backend is running'
+        message: 'Backend is running on Vercel'
     });
 });
 
@@ -45,7 +50,6 @@ async function initDatabase() {
             console.log('✅ Database connected successfully');
         } catch (error) {
             console.error('❌ Database connection failed:', error.message);
-            // Don't throw - let the app still work
         }
     }
 }
@@ -58,7 +62,7 @@ app.use(async (req, res, next) => {
     next();
 });
 
-// Routes
+// Routes - IMPORTANT: Import queueService ONLY when needed, not at startup
 app.use('/api/auth', authRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/contacts', contactRoutes);
@@ -79,5 +83,5 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Export handler for Vercel
+// Export handler for Vercel - ensure it's a function
 export const handler = serverless(app);

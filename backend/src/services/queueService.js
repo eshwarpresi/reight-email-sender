@@ -7,12 +7,17 @@ class QueueService {
         console.log('🔧 QueueService: Constructor called');
         this.isProcessing = false;
         this.processingInterval = null;
-        this.startProcessor();
+        // DO NOT auto-start - only start when explicitly called
+        // this.startProcessor();
     }
 
+    // Call this method to start the processor (for Render/local)
     startProcessor() {
+        if (this.processingInterval) {
+            console.log('⏸️ QueueService: Processor already running');
+            return;
+        }
         console.log('▶️ QueueService: Starting processor...');
-        // Process queue every 5 seconds
         this.processingInterval = setInterval(() => {
             this.processQueue();
         }, 5000);
@@ -31,7 +36,6 @@ class QueueService {
         this.isProcessing = true;
         
         try {
-            // Get pending emails - including direct sends (campaign_id IS NULL)
             const pendingEmails = await query(
                 `SELECT eq.*, c.subject, c.content, c.content_html 
                  FROM email_queue eq
@@ -51,13 +55,11 @@ class QueueService {
             console.log(`📧 QueueService: Processing ${pendingEmails.length} pending emails`);
             logger.info(`Processing ${pendingEmails.length} pending emails`);
 
-            // Process emails one by one for better reliability
             for (let i = 0; i < pendingEmails.length; i++) {
                 const email = pendingEmails[i];
                 console.log(`📨 QueueService: Sending to ${email.recipient_email}`);
                 await this.processEmail(email);
                 
-                // Delay between emails
                 if (i < pendingEmails.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 3000));
                 }
@@ -76,11 +78,9 @@ class QueueService {
         try {
             console.log(`🔍 QueueService: Processing email ID ${email.id} to ${email.recipient_email}`);
             
-            // Get user's SMTP credentials
             let userEmail = null;
             let userPassword = null;
             
-            // If this is from a campaign, get the user's saved credentials from the campaign
             if (email.campaign_id) {
                 console.log(`📋 QueueService: Getting credentials for campaign ${email.campaign_id}`);
                 const campaign = await queryOne(
@@ -97,13 +97,8 @@ class QueueService {
                 }
             }
             
-            // For direct sends or if no campaign credentials found
             if (!userEmail || !userPassword) {
-                console.log(`📋 QueueService: Checking for user's saved credentials...`);
-                
-                // Try to get credentials from the user who created the email
-                // For direct sends, we need to get from the request - stored in email_queue
-                // Fallback to environment variables
+                console.log(`📋 QueueService: Using environment credentials`);
                 userEmail = process.env.SMTP_USER;
                 userPassword = process.env.SMTP_PASSWORD;
                 
@@ -111,7 +106,7 @@ class QueueService {
                     console.log(`📧 QueueService: Using environment credentials: ${userEmail}`);
                 } else {
                     console.error(`❌ QueueService: No SMTP credentials available!`);
-                    throw new Error('SMTP credentials not configured. Please save your email settings in Settings page.');
+                    throw new Error('SMTP credentials not configured.');
                 }
             }
             
@@ -304,4 +299,6 @@ class QueueService {
     }
 }
 
-export default new QueueService();
+// Export a singleton instance WITHOUT auto-starting
+const queueServiceInstance = new QueueService();
+export default queueServiceInstance;

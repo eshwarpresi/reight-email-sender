@@ -25,7 +25,16 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Initialize database with error handling for Vercel
+// Health check endpoint (before database)
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        message: 'Backend is running'
+    });
+});
+
+// Try to initialize database, but don't fail if it doesn't work
 let dbInitialized = false;
 
 async function initDatabase() {
@@ -36,7 +45,7 @@ async function initDatabase() {
             console.log('✅ Database connected successfully');
         } catch (error) {
             console.error('❌ Database connection failed:', error.message);
-            // Don't throw - let the app still work for read-only operations
+            // Don't throw - let the app still work
         }
     }
 }
@@ -56,15 +65,6 @@ app.use('/api/contacts', contactRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api', simpleEmailRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        status: 'healthy', 
-        timestamp: new Date().toISOString(),
-        database: dbInitialized ? 'connected' : 'not connected'
-    });
-});
-
 // 404 handler
 app.use('/api/*', (req, res) => {
     res.status(404).json({ success: false, message: 'API endpoint not found' });
@@ -81,11 +81,3 @@ app.use((err, req, res, next) => {
 
 // Export handler for Vercel
 export const handler = serverless(app);
-
-// For local development
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
-        console.log(`🚀 Server running on http://localhost:${PORT}`);
-    });
-}

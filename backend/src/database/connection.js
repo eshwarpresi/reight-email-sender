@@ -9,16 +9,42 @@ const __dirname = path.dirname(__filename);
 
 let dbInstance = null;
 
+// Determine the correct database path based on environment
+const getDatabasePath = () => {
+    // If DATABASE_PATH is set in environment, use it
+    if (process.env.DATABASE_PATH) {
+        return path.resolve(process.env.DATABASE_PATH);
+    }
+    
+    // For Render.com with persistent disk
+    if (process.env.RENDER) {
+        // Use persistent disk path if available
+        const renderDbPath = '/opt/render/project/src/backend/database/database.sqlite';
+        // Check if directory exists, if not use local path
+        try {
+            // We'll create directory later if needed
+            return renderDbPath;
+        } catch (error) {
+            console.log('Render persistent disk not available, using local path');
+        }
+    }
+    
+    // Default local path
+    return path.resolve('./database.sqlite');
+};
+
 export async function getDatabase() {
     if (dbInstance) {
         return dbInstance;
     }
 
-    const dbPath = path.resolve(process.env.DATABASE_PATH || './database.sqlite');
+    const dbPath = getDatabasePath();
     
     // Ensure database directory exists
     const dbDir = path.dirname(dbPath);
     await fs.mkdir(dbDir, { recursive: true });
+
+    console.log(`📁 Database path: ${dbPath}`);
 
     dbInstance = await open({
         filename: dbPath,
@@ -35,6 +61,8 @@ export async function getDatabase() {
     // Run migrations for existing database
     await runMigrations(dbInstance);
     
+    console.log('✅ Database connected successfully');
+    
     return dbInstance;
 }
 
@@ -49,15 +77,15 @@ async function initializeDatabase(db) {
         try {
             await db.exec(statement);
         } catch (error) {
-            console.error('Error executing schema statement:', error);
-            // Don't throw error for duplicate column errors
+            // Ignore duplicate column errors
             if (!error.message.includes('duplicate column')) {
+                console.error('Error executing schema statement:', error);
                 throw error;
             }
         }
     }
     
-    console.log('Database initialized successfully');
+    console.log('📊 Database initialized successfully');
 }
 
 async function runMigrations(db) {
@@ -92,7 +120,7 @@ async function runMigrations(db) {
             await db.exec('ALTER TABLE email_queue ADD COLUMN bcc_emails TEXT');
         }
         
-        console.log('Database migrations completed successfully');
+        console.log('✅ Database migrations completed successfully');
     } catch (error) {
         console.error('Migration error:', error.message);
         // Don't throw - migrations are optional
@@ -103,6 +131,7 @@ export async function closeDatabase() {
     if (dbInstance) {
         await dbInstance.close();
         dbInstance = null;
+        console.log('🔒 Database connection closed');
     }
 }
 

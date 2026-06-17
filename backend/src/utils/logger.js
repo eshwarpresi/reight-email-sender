@@ -2,11 +2,27 @@ import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
 
-const logDir = process.env.LOG_PATH || './logs';
+// Detect if running on Vercel serverless environment
+const isVercel = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 
-// Ensure log directory exists
-if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true });
+// Use /tmp for Vercel (writable), otherwise use ./logs
+let logDir = process.env.LOG_PATH || './logs';
+
+if (isVercel) {
+    logDir = '/tmp/logs';
+}
+
+// Try to create log directory, but don't fail if it doesn't work
+let logDirExists = false;
+try {
+    if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+    }
+    logDirExists = true;
+    console.log(`📁 Log directory: ${logDir}`);
+} catch (error) {
+    console.log('⚠️ Could not create logs directory, using console only');
+    logDirExists = false;
 }
 
 const logLevel = process.env.LOG_LEVEL || 'info';
@@ -28,45 +44,63 @@ const consoleFormat = winston.format.combine(
     })
 );
 
+// Create transports array
+const transports = [];
+
+// Always add console transport
+transports.push(
+    new winston.transports.Console({
+        format: consoleFormat
+    })
+);
+
+// Add file transports only if directory exists
+if (logDirExists) {
+    try {
+        transports.push(
+            new winston.transports.File({
+                filename: path.join(logDir, 'combined.log'),
+                maxsize: 5242880, // 5MB
+                maxFiles: 3,
+            }),
+            new winston.transports.File({
+                filename: path.join(logDir, 'error.log'),
+                level: 'error',
+                maxsize: 5242880,
+                maxFiles: 3,
+            })
+        );
+        // Only add emails.log if not in Vercel (to reduce writes)
+        if (!isVercel) {
+            transports.push(
+                new winston.transports.File({
+                    filename: path.join(logDir, 'emails.log'),
+                    level: 'info',
+                    maxsize: 5242880,
+                    maxFiles: 3,
+                })
+            );
+        }
+    } catch (error) {
+        console.log('⚠️ Could not create file transports, using console only');
+    }
+}
+
 // Create logger instance
 const logger = winston.createLogger({
     level: logLevel,
     format: logFormat,
-    transports: [
-        // Write all logs to combined.log
-        new winston.transports.File({
-            filename: path.join(logDir, 'combined.log'),
-            maxsize: 5242880, // 5MB
-            maxFiles: 5,
-        }),
-        // Write errors to error.log
-        new winston.transports.File({
-            filename: path.join(logDir, 'error.log'),
-            level: 'error',
-            maxsize: 5242880,
-            maxFiles: 5,
-        }),
-        // Write email-specific logs
-        new winston.transports.File({
-            filename: path.join(logDir, 'emails.log'),
-            level: 'info',
-            maxsize: 5242880,
-            maxFiles: 5,
-        })
-    ]
+    transports: transports,
 });
 
-// Add console transport in development
-if (process.env.NODE_ENV !== 'production') {
-    logger.add(new winston.transports.Console({
-        format: consoleFormat
-    }));
-}
-
-// Create stream for Morgan integration
+// Create stream for Morgan integration (only if logDir exists)
 export const stream = {
     write: (message) => {
-        logger.info(message.trim());
+        if (logDirExists) {
+            logger.info(message.trim());
+        } else {
+            console.log(message.trim());
+        }
     }
 };
 

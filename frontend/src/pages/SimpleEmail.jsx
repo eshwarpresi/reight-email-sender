@@ -124,7 +124,7 @@ export default function SimpleEmail() {
         let sent = 0;
         let failed = 0;
 
-        // Send emails one by one with delay (DIRECT SENDING - no queue)
+        // Send emails one by one with delay
         for (let i = 0; i < allEmails.length; i++) {
             const email = allEmails[i];
             
@@ -141,10 +141,9 @@ export default function SimpleEmail() {
                     formDataToSend.append('attachment', attachment);
                 }
 
-                // Direct send - NOT using queue
                 const response = await api.post('/send-single-email-direct', formDataToSend, {
                     headers: { 'Content-Type': 'multipart/form-data' },
-                    timeout: 60000
+                    timeout: 120000 // Increased from 60 to 120 seconds
                 });
                 
                 if (response.data.success) {
@@ -166,10 +165,8 @@ export default function SimpleEmail() {
                 toast.error(`❌ Failed to send to ${email}`);
             }
             
-            // Update progress
             setProgress(((i + 1) / allEmails.length) * 100);
             
-            // Delay between emails (2 seconds)
             if (i < allEmails.length - 1) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
@@ -272,6 +269,7 @@ export default function SimpleEmail() {
                             <li><strong>2 second delay</strong> between emails to avoid Gmail limits</li>
                             <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
                             <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
+                            <li>Timeout increased to 120 seconds for better reliability</li>
                         </ul>
                     </Alert>
 

@@ -2,6 +2,10 @@ import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
 import queueService from '../services/queueService.js';
 
+// DEFAULT COMPANY EMAIL - ALL EMAILS WILL BE SENT FROM THIS
+const DEFAULT_EMAIL = 'rates@pasfreight.com';
+const DEFAULT_PASSWORD = process.env.SMTP_PASSWORD; // App Password from Render env
+
 // Helper function to validate email format
 const isValidEmail = (email) => {
     const cleanEmail = email.replace(/[<>]/g, '').trim();
@@ -37,91 +41,30 @@ const cleanMultipleEmails = (emailsString) => {
     return cleanedEmails;
 };
 
-// Auto-detect email provider and create transporter
-const createTransporter = (from_email, from_password) => {
-    const domain = from_email.split('@')[1]?.toLowerCase() || '';
-    
-    // Default: Gmail
-    let config = {
+// Create transporter with default email
+const createTransporter = () => {
+    return nodemailer.createTransport({
         host: 'smtp.gmail.com',
-        port: 465,
-        secure: true,
+        port: 587,
+        secure: false,
         auth: {
-            user: from_email,
-            pass: from_password,
+            user: DEFAULT_EMAIL,
+            pass: DEFAULT_PASSWORD,
         },
-        connectionTimeout: 90000,
-        greetingTimeout: 90000,
-        socketTimeout: 90000,
+        connectionTimeout: 30000,
+        greetingTimeout: 30000,
+        socketTimeout: 30000,
         tls: {
             rejectUnauthorized: false,
+            minVersion: 'TLSv1.2'
         },
-    };
-
-    // Outlook/Hotmail/Live
-    if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live')) {
-        config = {
-            host: 'smtp-mail.outlook.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            connectionTimeout: 90000,
-            greetingTimeout: 90000,
-            socketTimeout: 90000,
-            tls: {
-                rejectUnauthorized: false,
-            },
-        };
-    }
-    
-    // Brevo (Sendinblue)
-    if (domain.includes('brevo') || domain.includes('sendinblue')) {
-        config = {
-            host: 'smtp-relay.brevo.com',
-            port: 587,
-            secure: false,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            connectionTimeout: 90000,
-            greetingTimeout: 90000,
-            socketTimeout: 90000,
-            tls: {
-                rejectUnauthorized: false,
-            },
-        };
-    }
-
-    // Yahoo
-    if (domain.includes('yahoo')) {
-        config = {
-            host: 'smtp.mail.yahoo.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: from_email,
-                pass: from_password,
-            },
-            connectionTimeout: 90000,
-            greetingTimeout: 90000,
-            socketTimeout: 90000,
-            tls: {
-                rejectUnauthorized: false,
-            },
-        };
-    }
-
-    return nodemailer.createTransport(config);
+    });
 };
 
-// Send single email using queue system
+// Send single email using queue system (USES DEFAULT EMAIL)
 export const sendSingleEmail = async (req, res) => {
     try {
-        let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
+        let { to_email, cc_emails, bcc_emails, subject, content } = req.body;
         const attachment = req.file;
 
         const cleanedEmail = cleanEmail(to_email);
@@ -133,11 +76,11 @@ export const sendSingleEmail = async (req, res) => {
             });
         }
 
-        // Add to queue system
+        // Use default email - no need for from_email/from_password from frontend
         const queueItem = await queueService.addDirectToQueue(
             [cleanedEmail],
-            from_email,
-            from_password,
+            DEFAULT_EMAIL,
+            DEFAULT_PASSWORD,
             subject,
             content,
             cc_emails,
@@ -148,7 +91,8 @@ export const sendSingleEmail = async (req, res) => {
             success: true,
             message: `Email queued for sending to ${cleanedEmail}`,
             queueId: queueItem[0]?.id,
-            queued: true
+            queued: true,
+            from: DEFAULT_EMAIL
         });
 
     } catch (error) {
@@ -160,10 +104,10 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// DIRECT SEND - Bypasses queue (like Personalized Email)
+// DIRECT SEND - Bypasses queue (USES DEFAULT EMAIL)
 export const sendSingleEmailDirect = async (req, res) => {
     try {
-        let { from_email, from_password, to_email, cc_emails, bcc_emails, subject, content } = req.body;
+        let { to_email, cc_emails, bcc_emails, subject, content } = req.body;
         const attachment = req.file;
 
         const cleanedEmail = cleanEmail(to_email);
@@ -179,19 +123,19 @@ export const sendSingleEmailDirect = async (req, res) => {
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
 
-        // Create transporter based on email provider
-        const transporter = createTransporter(from_email, from_password);
+        // Create transporter with default credentials
+        const transporter = createTransporter();
 
         // Verify connection before sending
         await transporter.verify();
 
         const mailOptions = {
-            from: from_email,
+            from: DEFAULT_EMAIL,
             to: cleanedEmail,
-            subject: subject,
+            subject: subject || 'Freight Rates Request',
             html: content.replace(/\n/g, '<br>'),
             text: content.replace(/<[^>]*>/g, ''),
-            replyTo: from_email,
+            replyTo: DEFAULT_EMAIL,
             headers: {
                 'X-Priority': '1',
                 'X-MSMail-Priority': 'High',
@@ -213,11 +157,12 @@ export const sendSingleEmailDirect = async (req, res) => {
         await transporter.sendMail(mailOptions);
         transporter.close();
 
-        logger.info(`✅ Email sent directly to ${cleanedEmail} from ${from_email}`);
+        logger.info(`✅ Email sent directly to ${cleanedEmail} from ${DEFAULT_EMAIL}`);
         
         res.json({
             success: true,
-            message: `Email sent to ${cleanedEmail}`
+            message: `Email sent to ${cleanedEmail}`,
+            from: DEFAULT_EMAIL
         });
 
     } catch (error) {
@@ -225,9 +170,11 @@ export const sendSingleEmailDirect = async (req, res) => {
         
         let errorMessage = error.message;
         if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-            errorMessage = '❌ Invalid email credentials! Please check your email and password/App Password in Settings.';
+            errorMessage = '❌ Invalid email credentials! Please check the company email App Password.';
         } else if (errorMessage.includes('ECONNREFUSED')) {
-            errorMessage = '❌ SMTP connection refused. Please check your network or try a different email provider.';
+            errorMessage = '❌ SMTP connection refused. Please try again later.';
+        } else if (errorMessage.includes('timeout')) {
+            errorMessage = '❌ Connection timeout. Please try again later.';
         }
         
         res.status(500).json({
@@ -237,10 +184,10 @@ export const sendSingleEmailDirect = async (req, res) => {
     }
 };
 
-// Batch send - USING QUEUE SYSTEM
+// Batch send - USING QUEUE SYSTEM (USES DEFAULT EMAIL)
 export const sendBatchEmails = async (req, res) => {
     try {
-        const { from_email, from_password, recipients, cc_emails, bcc_emails, subject, content } = req.body;
+        const { recipients, cc_emails, bcc_emails, subject, content } = req.body;
         
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
@@ -270,8 +217,8 @@ export const sendBatchEmails = async (req, res) => {
             
             const result = await queueService.addDirectToQueue(
                 [recipient.email],
-                from_email,
-                from_password,
+                DEFAULT_EMAIL,
+                DEFAULT_PASSWORD,
                 subject,
                 personalizedContent,
                 ccList.join(', '),
@@ -282,11 +229,12 @@ export const sendBatchEmails = async (req, res) => {
         
         res.json({
             success: true,
-            message: `${queueItems.length} emails queued for sending`,
+            message: `${queueItems.length} emails queued for sending from ${DEFAULT_EMAIL}`,
             data: {
                 queued: queueItems.length,
                 invalid: invalidRecipients.length,
-                invalidEmails: invalidRecipients
+                invalidEmails: invalidRecipients,
+                from: DEFAULT_EMAIL
             }
         });
         

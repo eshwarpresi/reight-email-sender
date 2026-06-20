@@ -9,16 +9,16 @@ class EmailService {
         this.transporter = null;
     }
 
-    // Create transporter with user's credentials
+    // Create transporter with Brevo SMTP (works on Render!)
     createTransporter(from_email, from_password) {
-        // Use Gmail SMTP with better settings for Render
+        // Use Brevo SMTP - reliable on Render
         return nodemailer.createTransport({
-            host: 'smtp.gmail.com',
+            host: 'smtp-relay.brevo.com',
             port: 587,
             secure: false,
             auth: {
-                user: from_email,
-                pass: from_password,
+                user: from_email,  // Brevo SMTP Login (af64cb001@smtp-brevo.com)
+                pass: from_password, // Brevo SMTP Key
             },
             connectionTimeout: 30000,
             greetingTimeout: 30000,
@@ -50,12 +50,12 @@ class EmailService {
             const contentHtml = emailData.content_html || content;
             
             const mailOptions = {
-                from: userEmail,
+                from: 'rates@pasfreight.com', // Always use company email
                 to: emailData.recipient_email,
                 subject: emailData.subject || 'Freight Rates Request',
                 html: contentHtml.replace(/\n/g, '<br>'),
                 text: content.replace(/<[^>]*>/g, ''),
-                replyTo: userEmail,
+                replyTo: 'rates@pasfreight.com',
                 headers: {
                     'X-Priority': '1',
                     'X-MSMail-Priority': 'High',
@@ -96,7 +96,7 @@ class EmailService {
                 queueId,
                 campaignId,
                 duration,
-                from: userEmail
+                from: 'rates@pasfreight.com'
             });
 
             await run(
@@ -139,7 +139,7 @@ class EmailService {
             
             let errorMessage = error.message;
             if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-                errorMessage = '❌ Invalid email credentials! Please check your email and App Password.';
+                errorMessage = '❌ Invalid Brevo credentials! Please check SMTP Login and Key.';
             } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('timeout')) {
                 errorMessage = '❌ SMTP connection failed. Try again later.';
             }
@@ -149,7 +149,7 @@ class EmailService {
                 queueId,
                 campaignId,
                 duration,
-                from: userEmail
+                from: 'rates@pasfreight.com'
             });
 
             await run(

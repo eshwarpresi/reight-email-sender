@@ -16,13 +16,15 @@ import api from '../services/api';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
+// Company default email - all emails sent from this address
+const COMPANY_EMAIL = 'rates@pasfreight.com';
+const COMPANY_PASSWORD = '********'; // Hidden - managed by backend
+
 export default function SimpleEmail() {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [results, setResults] = useState([]);
     const [formData, setFormData] = useState({
-        from_email: '',
-        from_password: '',
         to_emails: '',
         cc_emails: '',
         bcc_emails: '',
@@ -30,8 +32,6 @@ export default function SimpleEmail() {
         content: '',
     });
     const [attachment, setAttachment] = useState(null);
-    const [hasSavedSettings, setHasSavedSettings] = useState(false);
-    const [showCredentials, setShowCredentials] = useState(false);
     const [fixedEmails, setFixedEmails] = useState([]);
     const [sentCount, setSentCount] = useState(0);
     const [failedCount, setFailedCount] = useState(0);
@@ -86,14 +86,6 @@ export default function SimpleEmail() {
     };
 
     const handleSend = async () => {
-        if (!formData.from_email) {
-            toast.error('Please enter your Gmail address or save it in Settings');
-            return;
-        }
-        if (!formData.from_password) {
-            toast.error('Please enter your Gmail App Password or save it in Settings');
-            return;
-        }
         if (!formData.to_emails) {
             toast.error('Please enter recipient emails');
             return;
@@ -124,14 +116,14 @@ export default function SimpleEmail() {
         let sent = 0;
         let failed = 0;
 
-        // Send emails one by one with delay
+        // Send emails one by one with delay using COMPANY_EMAIL
         for (let i = 0; i < allEmails.length; i++) {
             const email = allEmails[i];
             
             try {
                 const formDataToSend = new FormData();
-                formDataToSend.append('from_email', formData.from_email);
-                formDataToSend.append('from_password', formData.from_password);
+                formDataToSend.append('from_email', COMPANY_EMAIL);
+                formDataToSend.append('from_password', COMPANY_PASSWORD);
                 formDataToSend.append('to_email', email);
                 formDataToSend.append('cc_emails', formData.cc_emails);
                 formDataToSend.append('bcc_emails', formData.bcc_emails);
@@ -143,7 +135,7 @@ export default function SimpleEmail() {
 
                 const response = await api.post('/send-single-email-direct', formDataToSend, {
                     headers: { 'Content-Type': 'multipart/form-data' },
-                    timeout: 120000 // Increased from 60 to 120 seconds
+                    timeout: 120000
                 });
                 
                 if (response.data.success) {
@@ -175,7 +167,7 @@ export default function SimpleEmail() {
         setLoading(false);
         
         if (failed === 0) {
-            toast.success(`🎉 Success! All ${sent} emails sent successfully!`);
+            toast.success(`🎉 Success! All ${sent} emails sent successfully from ${COMPANY_EMAIL}!`);
         } else {
             toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. Check results below.`);
         }
@@ -200,26 +192,8 @@ export default function SimpleEmail() {
 
     // Load default CC/BCC settings
     useEffect(() => {
-        loadSavedSettings();
         loadDefaultCcBcc();
     }, []);
-
-    const loadSavedSettings = async () => {
-        try {
-            const response = await api.get('/auth/smtp-settings');
-            if (response.data.data && response.data.data.smtp_email) {
-                setFormData(prev => ({
-                    ...prev,
-                    from_email: response.data.data.smtp_email,
-                    from_password: response.data.data.smtp_password,
-                }));
-                setHasSavedSettings(true);
-                toast.success('Loaded your saved Gmail settings!');
-            }
-        } catch (error) {
-            console.error('Failed to load SMTP settings:', error);
-        }
-    };
 
     const loadDefaultCcBcc = async () => {
         try {
@@ -247,53 +221,22 @@ export default function SimpleEmail() {
                 </Typography>
 
                 <Stack spacing={3}>
-                    {hasSavedSettings && (
-                        <Alert severity="success">
-                            ✓ Your Gmail credentials are loaded from Settings. 
-                            <Button size="small" onClick={() => setShowCredentials(!showCredentials)} sx={{ ml: 2 }}>
-                                {showCredentials ? 'Hide' : 'Show'} Credentials
-                            </Button>
-                        </Alert>
-                    )}
-
-                    {!hasSavedSettings && (
-                        <Alert severity="info">
-                            <strong>Save your Gmail credentials once in Settings page!</strong>
-                        </Alert>
-                    )}
+                    <Alert severity="success" sx={{ mb: 2 }}>
+                        <strong>✅ Sending from:</strong> <strong style={{ fontSize: '1.1rem' }}>{COMPANY_EMAIL}</strong>
+                        <br />
+                        <small>All emails are sent from the company email address. No credentials needed!</small>
+                    </Alert>
 
                     <Alert severity="info">
                         <strong>📧 Bulk Email Tips:</strong>
                         <ul style={{ margin: '8px 0 0 20px' }}>
+                            <li><strong>Sender:</strong> {COMPANY_EMAIL} (company email)</li>
                             <li><strong>Real-time sending:</strong> Each email sends one by one</li>
-                            <li><strong>2 second delay</strong> between emails to avoid Gmail limits</li>
+                            <li><strong>2 second delay</strong> between emails to avoid rate limits</li>
                             <li><strong>CC:</strong> Carbon Copy - visible to all recipients</li>
                             <li><strong>BCC:</strong> Blind Carbon Copy - hidden from other recipients</li>
-                            <li>Timeout increased to 120 seconds for better reliability</li>
                         </ul>
                     </Alert>
-
-                    <TextField
-                        fullWidth
-                        label="Your Gmail Address"
-                        type="email"
-                        placeholder="youremail@gmail.com"
-                        value={formData.from_email}
-                        onChange={(e) => setFormData({ ...formData, from_email: e.target.value })}
-                        required
-                        disabled={hasSavedSettings && !showCredentials}
-                    />
-
-                    <TextField
-                        fullWidth
-                        label="Gmail App Password"
-                        type="password"
-                        placeholder="16-character app password"
-                        value={formData.from_password}
-                        onChange={(e) => setFormData({ ...formData, from_password: e.target.value })}
-                        required
-                        disabled={hasSavedSettings && !showCredentials}
-                    />
 
                     <TextField
                         fullWidth
@@ -360,7 +303,7 @@ export default function SimpleEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary">
-                                Sending {fixedEmails.length} emails... {Math.round(progress)}% ({sentCount} sent, {failedCount} failed)
+                                Sending {fixedEmails.length} emails from {COMPANY_EMAIL}... {Math.round(progress)}% ({sentCount} sent, {failedCount} failed)
                             </Typography>
                         </Box>
                     )}

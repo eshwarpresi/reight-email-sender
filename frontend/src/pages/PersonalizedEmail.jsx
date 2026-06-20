@@ -34,6 +34,10 @@ import api from '../services/api';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
+// Company default email - all emails sent from this address
+const COMPANY_EMAIL = 'rates@pasfreight.com';
+const COMPANY_PASSWORD = '********'; // Hidden - managed by backend
+
 export default function PersonalizedEmail() {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -41,14 +45,10 @@ export default function PersonalizedEmail() {
     const [fixedRecipients, setFixedRecipients] = useState([]);
     const [template, setTemplate] = useState('');
     const [subject, setSubject] = useState('');
-    const [fromEmail, setFromEmail] = useState('');
-    const [fromPassword, setFromPassword] = useState('');
     const [ccEmails, setCcEmails] = useState('');
     const [bccEmails, setBccEmails] = useState('');
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewData, setPreviewData] = useState([]);
-    const [hasSavedSettings, setHasSavedSettings] = useState(false);
-    const [showCredentials, setShowCredentials] = useState(false);
     const [sendResults, setSendResults] = useState([]);
     const [manualInput, setManualInput] = useState('');
 
@@ -72,17 +72,12 @@ export default function PersonalizedEmail() {
     // Extract name from format "Name <email@domain.com>" or "Name email@domain.com"
     const extractNameFromEmail = (text) => {
         if (!text) return '';
-        // Remove email part to get name
         let name = text.replace(/<[^>]*>/g, '').trim();
         name = name.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '').trim();
         return name || 'Customer';
     };
 
-    // Parse manual input - supports formats:
-    // 1. Name, Email (comma separated)
-    // 2. Name\tEmail (tab separated)
-    // 3. Name <email@domain.com>
-    // 4. email@domain.com
+    // Parse manual input
     const parseManualInput = (input) => {
         if (!input.trim()) return [];
         
@@ -90,7 +85,6 @@ export default function PersonalizedEmail() {
         const parsed = [];
         let hasHeader = false;
         
-        // Check if first line is a header
         const firstLine = lines[0]?.toLowerCase() || '';
         if (firstLine.includes('name') && (firstLine.includes('email') || firstLine.includes('mail'))) {
             hasHeader = true;
@@ -103,26 +97,23 @@ export default function PersonalizedEmail() {
             let name = '';
             let email = '';
             
-            // Try to detect format: Name <email@domain.com>
             const angleBracketMatch = line.match(/<([^>]+)>/);
             if (angleBracketMatch) {
                 email = angleBracketMatch[1];
                 name = line.replace(/<[^>]*>/, '').trim();
             } else {
-                // Try tab or comma separated
                 let parts;
                 if (line.includes('\t')) {
                     parts = line.split('\t');
                 } else if (line.includes(',')) {
                     parts = line.split(',');
                 } else {
-                    parts = line.split(/\s{2,}/); // Multiple spaces
+                    parts = line.split(/\s{2,}/);
                 }
                 
                 if (parts && parts.length >= 2) {
                     const first = parts[0].trim();
                     const second = parts[1].trim();
-                    // Check which one is email
                     if (second.includes('@')) {
                         name = first;
                         email = second;
@@ -130,7 +121,6 @@ export default function PersonalizedEmail() {
                         name = second;
                         email = first;
                     } else {
-                        // Try to find email in the line
                         const emailMatch = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
                         if (emailMatch) {
                             email = emailMatch[0];
@@ -138,7 +128,6 @@ export default function PersonalizedEmail() {
                         }
                     }
                 } else {
-                    // Single value - try to extract email
                     const emailMatch = line.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
                     if (emailMatch) {
                         email = emailMatch[0];
@@ -147,7 +136,6 @@ export default function PersonalizedEmail() {
                 }
             }
             
-            // Clean email
             const fixedEmail = fixEmail(email);
             if (fixedEmail && fixedEmail.includes('@')) {
                 parsed.push({
@@ -208,23 +196,8 @@ export default function PersonalizedEmail() {
 
     // Load default CC/BCC settings
     useEffect(() => {
-        loadSavedSettings();
         loadDefaultCcBcc();
     }, []);
-
-    const loadSavedSettings = async () => {
-        try {
-            const response = await api.get('/auth/smtp-settings');
-            if (response.data.data && response.data.data.smtp_email) {
-                setFromEmail(response.data.data.smtp_email);
-                setFromPassword(response.data.data.smtp_password);
-                setHasSavedSettings(true);
-                toast.success('Loaded your saved Gmail settings!');
-            }
-        } catch (error) {
-            console.error('Failed to load SMTP settings:', error);
-        }
-    };
 
     const loadDefaultCcBcc = async () => {
         try {
@@ -318,14 +291,6 @@ export default function PersonalizedEmail() {
     };
 
     const handleSend = async () => {
-        if (!fromEmail) {
-            toast.error('Please enter your Gmail address or save it in Settings');
-            return;
-        }
-        if (!fromPassword) {
-            toast.error('Please enter your Gmail App Password or save it in Settings');
-            return;
-        }
         if (!subject) {
             toast.error('Please enter subject');
             return;
@@ -356,8 +321,8 @@ export default function PersonalizedEmail() {
                 
                 try {
                     const formData = new FormData();
-                    formData.append('from_email', fromEmail);
-                    formData.append('from_password', fromPassword);
+                    formData.append('from_email', COMPANY_EMAIL);
+                    formData.append('from_password', COMPANY_PASSWORD);
                     formData.append('to_email', recipient.email);
                     formData.append('cc_emails', ccEmails);
                     formData.append('bcc_emails', bccEmails);
@@ -407,7 +372,7 @@ export default function PersonalizedEmail() {
         setLoading(false);
         
         if (failed === 0) {
-            toast.success(`✅ Success! All ${sent} personalized emails sent successfully!`);
+            toast.success(`✅ Success! All ${sent} personalized emails sent successfully from ${COMPANY_EMAIL}!`);
         } else {
             toast.warning(`⚠️ Completed: ${sent} sent, ${failed} failed. Check results below.`);
         }
@@ -437,24 +402,15 @@ export default function PersonalizedEmail() {
                     Personalized Bulk Email Sender
                 </Typography>
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ mb: 4 }}>
-                    Each email is personalized with recipient's name - Upload Excel, Paste Manually, or Add One by One
+                    Each email is personalized with recipient's name - All emails sent from {COMPANY_EMAIL}
                 </Typography>
 
                 <Stack spacing={3}>
-                    {hasSavedSettings && (
-                        <Alert severity="success">
-                            ✓ Your Gmail credentials are loaded from Settings. 
-                            <Button size="small" onClick={() => setShowCredentials(!showCredentials)} sx={{ ml: 2 }}>
-                                {showCredentials ? 'Hide' : 'Show'} Credentials
-                            </Button>
-                        </Alert>
-                    )}
-
-                    {!hasSavedSettings && (
-                        <Alert severity="info">
-                            <strong>Save your Gmail credentials once in Settings page!</strong>
-                        </Alert>
-                    )}
+                    <Alert severity="success" sx={{ mb: 2 }}>
+                        <strong>✅ Sending from:</strong> <strong style={{ fontSize: '1.1rem' }}>{COMPANY_EMAIL}</strong>
+                        <br />
+                        <small>All emails are sent from the company email address. No credentials needed!</small>
+                    </Alert>
 
                     <Alert severity="info">
                         <strong>📧 Add Recipients in Multiple Ways:</strong>
@@ -462,30 +418,9 @@ export default function PersonalizedEmail() {
                             <li>📤 <strong>Upload:</strong> Excel/CSV file with Name, Email columns</li>
                             <li>📋 <strong>Paste:</strong> Copy-paste from any source (supports multiple formats)</li>
                             <li>➕ <strong>Add One by One:</strong> Manually add individual recipients</li>
+                            <li>📧 <strong>Sender:</strong> {COMPANY_EMAIL} (company email)</li>
                         </ul>
                     </Alert>
-
-                    <TextField
-                        fullWidth
-                        label="Your Gmail Address"
-                        type="email"
-                        placeholder="youremail@gmail.com"
-                        value={fromEmail}
-                        onChange={(e) => setFromEmail(e.target.value)}
-                        required
-                        disabled={hasSavedSettings && !showCredentials}
-                    />
-
-                    <TextField
-                        fullWidth
-                        label="Gmail App Password"
-                        type="password"
-                        placeholder="16-character app password"
-                        value={fromPassword}
-                        onChange={(e) => setFromPassword(e.target.value)}
-                        required
-                        disabled={hasSavedSettings && !showCredentials}
-                    />
 
                     <TextField
                         fullWidth
@@ -540,7 +475,6 @@ export default function PersonalizedEmail() {
                             Add Recipients
                         </Typography>
 
-                        {/* Manual Paste Section - NEW */}
                         <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
                             <Typography variant="subtitle2" gutterBottom>
                                 📋 Paste from Excel/CSV/Email List
@@ -625,7 +559,7 @@ export default function PersonalizedEmail() {
                         <Box>
                             <LinearProgress variant="determinate" value={progress} />
                             <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                Sending {fixedRecipients.length} emails... {Math.round(progress)}% (5 emails per batch)
+                                Sending {fixedRecipients.length} emails from {COMPANY_EMAIL}... {Math.round(progress)}%
                             </Typography>
                         </Box>
                     )}

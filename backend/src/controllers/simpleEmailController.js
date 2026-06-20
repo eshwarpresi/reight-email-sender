@@ -4,7 +4,7 @@ import queueService from '../services/queueService.js';
 
 // DEFAULT COMPANY EMAIL - ALL EMAILS WILL BE SENT FROM THIS
 const DEFAULT_EMAIL = 'rates@pasfreight.com';
-const DEFAULT_PASSWORD = process.env.SMTP_PASSWORD; // App Password from Render env
+const DEFAULT_PASSWORD = process.env.SMTP_PASSWORD; // Brevo SMTP Key from Render env
 
 // Helper function to validate email format
 const isValidEmail = (email) => {
@@ -41,15 +41,15 @@ const cleanMultipleEmails = (emailsString) => {
     return cleanedEmails;
 };
 
-// Create transporter with default email
+// Create transporter with default email using Brevo SMTP
 const createTransporter = () => {
     return nodemailer.createTransport({
-        host: 'smtp.gmail.com',
+        host: 'smtp-relay.brevo.com',  // Brevo SMTP - works on Render!
         port: 587,
         secure: false,
         auth: {
-            user: DEFAULT_EMAIL,
-            pass: DEFAULT_PASSWORD,
+            user: DEFAULT_EMAIL,  // Brevo SMTP Login (af64cb001@smtp-brevo.com)
+            pass: DEFAULT_PASSWORD, // Brevo SMTP Key
         },
         connectionTimeout: 30000,
         greetingTimeout: 30000,
@@ -123,7 +123,7 @@ export const sendSingleEmailDirect = async (req, res) => {
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
 
-        // Create transporter with default credentials
+        // Create transporter with default credentials (Brevo)
         const transporter = createTransporter();
 
         // Verify connection before sending
@@ -170,7 +170,7 @@ export const sendSingleEmailDirect = async (req, res) => {
         
         let errorMessage = error.message;
         if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-            errorMessage = '❌ Invalid email credentials! Please check the company email App Password.';
+            errorMessage = '❌ Invalid Brevo credentials! Please check the SMTP Login and Key in Render environment variables.';
         } else if (errorMessage.includes('ECONNREFUSED')) {
             errorMessage = '❌ SMTP connection refused. Please try again later.';
         } else if (errorMessage.includes('timeout')) {

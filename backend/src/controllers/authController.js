@@ -3,6 +3,10 @@ import bcrypt from 'bcryptjs';
 import { run, queryOne } from '../database/connection.js';
 import logger from '../utils/logger.js';
 
+// Company default email - all emails sent from this address
+const COMPANY_EMAIL = 'rates@pasfreight.com';
+const COMPANY_PASSWORD = process.env.SMTP_PASSWORD || '';
+
 class AuthController {
     constructor() {
         // Bind all methods to this instance
@@ -214,18 +218,13 @@ class AuthController {
 
     async saveSmtpSettings(req, res) {
         try {
-            const { smtp_email, smtp_password } = req.body;
-            
-            await run(
-                'UPDATE users SET smtp_email = ?, smtp_password = ?, updated_at = datetime("now") WHERE id = ?',
-                [smtp_email, smtp_password, req.user.id]
-            );
-            
-            logger.info(`SMTP settings saved for user ${req.user.id}`);
+            // Don't actually save - we use company email
+            // Just return success
+            logger.info(`SMTP settings request from user ${req.user.id}`);
             
             res.json({
                 success: true,
-                message: 'SMTP settings saved successfully'
+                message: 'Company email is already configured'
             });
         } catch (error) {
             logger.error('Save SMTP settings error:', error);
@@ -238,16 +237,14 @@ class AuthController {
 
     async getSmtpSettings(req, res) {
         try {
-            const user = await queryOne(
-                'SELECT smtp_email, smtp_password FROM users WHERE id = ?',
-                [req.user.id]
-            );
-            
+            // Always return the company email
             res.json({
                 success: true,
                 data: {
-                    smtp_email: user?.smtp_email || '',
-                    smtp_password: user?.smtp_password || ''
+                    smtp_email: COMPANY_EMAIL,
+                    smtp_password: '********', // Hidden
+                    is_default: true,
+                    message: 'All emails are sent from the company email: rates@pasfreight.com'
                 }
             });
         } catch (error) {

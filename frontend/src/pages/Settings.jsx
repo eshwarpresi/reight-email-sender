@@ -24,6 +24,7 @@ import {
     Security as SecurityIcon,
     Google as GoogleIcon,
     CopyAll as CopyAllIcon,
+    CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
@@ -40,8 +41,8 @@ export default function Settings() {
         confirm_password: '',
     });
     const [smtpData, setSmtpData] = useState({
-        smtp_email: '',
-        smtp_password: '',
+        smtp_email: 'rates@pasfreight.com', // Default company email
+        smtp_password: '********', // Hidden
     });
     const [ccBccData, setCcBccData] = useState({
         default_cc: '',
@@ -64,10 +65,13 @@ export default function Settings() {
         try {
             const response = await api.get('/auth/smtp-settings');
             if (response.data.data) {
-                setSmtpData({
-                    smtp_email: response.data.data.smtp_email || '',
-                    smtp_password: response.data.data.smtp_password || '',
-                });
+                // Only update if there are saved settings, otherwise keep defaults
+                if (response.data.data.smtp_email) {
+                    setSmtpData({
+                        smtp_email: response.data.data.smtp_email,
+                        smtp_password: '********',
+                    });
+                }
             }
         } catch (error) {
             console.error('Failed to load SMTP settings:', error);
@@ -89,24 +93,8 @@ export default function Settings() {
     };
 
     const handleSaveSmtpSettings = async () => {
-        if (!smtpData.smtp_email) {
-            toast.error('Please enter your Gmail address');
-            return;
-        }
-        if (!smtpData.smtp_password) {
-            toast.error('Please enter your Gmail App Password');
-            return;
-        }
-
-        setSmtpLoading(true);
-        try {
-            await api.post('/auth/smtp-settings', smtpData);
-            toast.success('Gmail settings saved successfully!');
-        } catch (error) {
-            toast.error('Failed to save Gmail settings');
-        } finally {
-            setSmtpLoading(false);
-        }
+        // Just show success - no need to save since it's default
+        toast.success('✅ Company email is already configured: rates@pasfreight.com');
     };
 
     const handleSaveDefaultCcBcc = async () => {
@@ -155,69 +143,85 @@ export default function Settings() {
             </Typography>
 
             <Grid container spacing={3}>
-                {/* Gmail SMTP Settings */}
+                {/* Company Email Settings - DEFAULT */}
                 <Grid item xs={12} md={6}>
                     <Card>
                         <CardContent>
                             <Box display="flex" alignItems="center" mb={3}>
-                                <GoogleIcon sx={{ fontSize: 40, color: '#DB4437', mr: 2 }} />
+                                <EmailIcon sx={{ fontSize: 40, color: '#1976d2', mr: 2 }} />
                                 <Box>
-                                    <Typography variant="h6">Gmail SMTP Settings</Typography>
+                                    <Typography variant="h6">Company Email Settings</Typography>
                                     <Typography variant="body2" color="textSecondary">
-                                        Enter once - never again for bulk emails
+                                        All emails are sent from the company email
                                     </Typography>
                                 </Box>
                             </Box>
                             
-                            <Alert severity="info" sx={{ mb: 2 }}>
-                                <strong>How to get Gmail App Password:</strong>
-                                <ol style={{ margin: '8px 0 0 20px' }}>
-                                    <li>Go to Google Account → Security → 2-Step Verification (must be ON)</li>
-                                    <li>Go to App Passwords → Select "Mail" → Generate</li>
-                                    <li>Copy the 16-character password</li>
-                                </ol>
+                            <Alert severity="success" sx={{ mb: 2 }}>
+                                <strong>✅ Company email is configured and ready!</strong>
+                                <br />
+                                All emails will be sent from: <strong>rates@pasfreight.com</strong>
                             </Alert>
 
                             <TextField
                                 fullWidth
-                                label="Your Gmail Address"
+                                label="Sending Email Address"
                                 type="email"
-                                placeholder="youremail@gmail.com"
-                                value={smtpData.smtp_email}
-                                onChange={(e) => setSmtpData({ ...smtpData, smtp_email: e.target.value })}
+                                value="rates@pasfreight.com"
                                 margin="normal"
-                                helperText="This email will be used to send all your bulk emails"
+                                disabled
+                                InputProps={{
+                                    startAdornment: (
+                                        <CheckCircleIcon color="success" sx={{ mr: 1 }} />
+                                    ),
+                                }}
+                                helperText="✅ This is the company email - all employees send from this address"
                             />
+                            
                             <TextField
                                 fullWidth
-                                label="Gmail App Password"
-                                type="password"
-                                placeholder="16-character app password"
-                                value={smtpData.smtp_password}
-                                onChange={(e) => setSmtpData({ ...smtpData, smtp_password: e.target.value })}
+                                label="SMTP Provider"
+                                value="Brevo (Sendinblue) - Active"
                                 margin="normal"
-                                helperText="Your password is encrypted and stored securely"
+                                disabled
+                                InputProps={{
+                                    startAdornment: (
+                                        <CheckCircleIcon color="success" sx={{ mr: 1 }} />
+                                    ),
+                                }}
                             />
+
+                            <TextField
+                                fullWidth
+                                label="Daily Email Limit"
+                                value="300 emails/day (Free plan)"
+                                margin="normal"
+                                disabled
+                            />
+
+                            <Alert severity="info" sx={{ mt: 2 }}>
+                                <strong>📧 How it works:</strong>
+                                <ul style={{ margin: '8px 0 0 20px' }}>
+                                    <li>All employees send from <strong>rates@pasfreight.com</strong></li>
+                                    <li>Agents see the company email as sender</li>
+                                    <li>No need to enter any email/password</li>
+                                    <li>Just login and send emails!</li>
+                                </ul>
+                            </Alert>
+
                             <Button
                                 variant="contained"
-                                color="primary"
-                                onClick={handleSaveSmtpSettings}
-                                disabled={smtpLoading}
+                                color="success"
                                 sx={{ mt: 2 }}
-                                startIcon={<SaveIcon />}
+                                startIcon={<CheckCircleIcon />}
                             >
-                                {smtpLoading ? 'Saving...' : 'Save Gmail Settings'}
+                                ✅ Ready to Send
                             </Button>
-                            {smtpData.smtp_email && (
-                                <Alert severity="success" sx={{ mt: 2 }}>
-                                    ✓ Gmail settings configured.
-                                </Alert>
-                            )}
                         </CardContent>
                     </Card>
                 </Grid>
 
-                {/* Default CC/BCC Settings - NEW */}
+                {/* Default CC/BCC Settings */}
                 <Grid item xs={12} md={6}>
                     <Card>
                         <CardContent>
@@ -472,8 +476,9 @@ export default function Settings() {
                 {/* Info Alert */}
                 <Grid item xs={12}>
                     <Alert severity="info">
-                        <strong>Security Tip:</strong> Your Gmail App Password is encrypted and stored securely. 
-                        Default CC/BCC will auto-fill in all email forms to save you time.
+                        <strong>✅ Company Email Configured:</strong> All emails are sent from <strong>rates@pasfreight.com</strong>
+                        <br />
+                        Employees do NOT need to enter any email or password - just login and send!
                     </Alert>
                 </Grid>
             </Grid>

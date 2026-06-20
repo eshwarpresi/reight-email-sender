@@ -9,16 +9,16 @@ class EmailService {
         this.transporter = null;
     }
 
-    // Create transporter with Brevo SMTP (works on Render!)
+    // Create transporter with SendGrid SMTP (works on Render!)
     createTransporter(from_email, from_password) {
-        // Use Brevo SMTP - reliable on Render
+        // Use SendGrid SMTP - reliable on Render
         return nodemailer.createTransport({
-            host: 'smtp-relay.brevo.com',
+            host: 'smtp.sendgrid.net',
             port: 587,
             secure: false,
             auth: {
-                user: from_email,  // Brevo SMTP Login (af64cb001@smtp-brevo.com)
-                pass: from_password, // Brevo SMTP Key
+                user: 'apikey',  // Must be 'apikey'
+                pass: from_password, // SendGrid API Key
             },
             connectionTimeout: 30000,
             greetingTimeout: 30000,
@@ -139,7 +139,7 @@ class EmailService {
             
             let errorMessage = error.message;
             if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-                errorMessage = '❌ Invalid Brevo credentials! Please check SMTP Login and Key.';
+                errorMessage = '❌ Invalid SendGrid credentials! Please check your API Key.';
             } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('timeout')) {
                 errorMessage = '❌ SMTP connection failed. Try again later.';
             }

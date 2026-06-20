@@ -44,12 +44,12 @@ const cleanMultipleEmails = (emailsString) => {
 // Create transporter with default email using Brevo SMTP
 const createTransporter = () => {
     return nodemailer.createTransport({
-        host: 'smtp-relay.brevo.com',  // Brevo SMTP - works on Render!
+        host: 'smtp-relay.brevo.com',
         port: 587,
         secure: false,
         auth: {
-            user: DEFAULT_EMAIL,  // Brevo SMTP Login (af64cb001@smtp-brevo.com)
-            pass: DEFAULT_PASSWORD, // Brevo SMTP Key
+            user: 'af64cb001@smtp-brevo.com',  // Brevo SMTP Login (HARDCODED)
+            pass: DEFAULT_PASSWORD, // Brevo SMTP Key from env
         },
         connectionTimeout: 30000,
         greetingTimeout: 30000,
@@ -133,8 +133,8 @@ export const sendSingleEmailDirect = async (req, res) => {
             from: DEFAULT_EMAIL,
             to: cleanedEmail,
             subject: subject || 'Freight Rates Request',
-            html: content.replace(/\n/g, '<br>'),
-            text: content.replace(/<[^>]*>/g, ''),
+            html: content ? content.replace(/\n/g, '<br>') : '',
+            text: content ? content.replace(/<[^>]*>/g, '') : '',
             replyTo: DEFAULT_EMAIL,
             headers: {
                 'X-Priority': '1',
@@ -213,7 +213,7 @@ export const sendBatchEmails = async (req, res) => {
 
         const queueItems = [];
         for (const recipient of validRecipients) {
-            const personalizedContent = content.replace(/{NAME}/g, recipient.name || 'Valued Customer');
+            const personalizedContent = content ? content.replace(/{NAME}/g, recipient.name || 'Valued Customer') : '';
             
             const result = await queueService.addDirectToQueue(
                 [recipient.email],

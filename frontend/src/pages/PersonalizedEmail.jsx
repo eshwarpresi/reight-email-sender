@@ -36,7 +36,6 @@ import 'react-quill/dist/quill.snow.css';
 
 // Company default email - all emails sent from this address
 const COMPANY_EMAIL = 'rates@pasfreight.com';
-const COMPANY_PASSWORD = '********'; // Hidden - managed by backend
 
 export default function PersonalizedEmail() {
     const [loading, setLoading] = useState(false);
@@ -321,8 +320,7 @@ export default function PersonalizedEmail() {
                 
                 try {
                     const formData = new FormData();
-                    formData.append('from_email', COMPANY_EMAIL);
-                    formData.append('from_password', COMPANY_PASSWORD);
+                    // ✅ NO from_email or from_password - backend uses company email
                     formData.append('to_email', recipient.email);
                     formData.append('cc_emails', ccEmails);
                     formData.append('bcc_emails', bccEmails);

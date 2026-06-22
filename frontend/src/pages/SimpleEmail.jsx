@@ -18,7 +18,6 @@ import 'react-quill/dist/quill.snow.css';
 
 // Company default email - all emails sent from this address
 const COMPANY_EMAIL = 'rates@pasfreight.com';
-const COMPANY_PASSWORD = '********'; // Hidden - managed by backend
 
 export default function SimpleEmail() {
     const [loading, setLoading] = useState(false);
@@ -116,14 +115,12 @@ export default function SimpleEmail() {
         let sent = 0;
         let failed = 0;
 
-        // Send emails one by one with delay using COMPANY_EMAIL
         for (let i = 0; i < allEmails.length; i++) {
             const email = allEmails[i];
             
             try {
                 const formDataToSend = new FormData();
-                formDataToSend.append('from_email', COMPANY_EMAIL);
-                formDataToSend.append('from_password', COMPANY_PASSWORD);
+                // ✅ NO from_email or from_password - backend uses company email
                 formDataToSend.append('to_email', email);
                 formDataToSend.append('cc_emails', formData.cc_emails);
                 formDataToSend.append('bcc_emails', formData.bcc_emails);

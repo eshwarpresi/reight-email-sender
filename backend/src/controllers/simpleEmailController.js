@@ -1,25 +1,9 @@
 import logger from '../utils/logger.js';
 import queueService from '../services/queueService.js';
-import * as brevo from '@getbrevo/brevo';
 
 const DEFAULT_EMAIL = process.env.SMTP_FROM_EMAIL || 'rates@pasfreight.com';
 const DEFAULT_NAME = process.env.SMTP_FROM_NAME || 'Freight Operations';
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
-
-// Brevo API client (singleton)
-let apiInstance = null;
-function getApiInstance() {
-    if (!apiInstance) {
-        if (!BREVO_API_KEY) {
-            throw new Error('❌ BREVO_API_KEY not set in environment variables');
-        }
-        apiInstance = new brevo.TransactionalEmailsApi();
-        const client = brevo.ApiClient.instance;
-        const apiKey = client.authentications['api-key'];
-        apiKey.apiKey = BREVO_API_KEY;
-    }
-    return apiInstance;
-}
 
 const isValidEmail = (email) => {
     const clean = email.replace(/[<>]/g, '').trim();
@@ -41,21 +25,39 @@ const cleanMultipleEmails = (emailsString) => {
 
 // Send via Brevo REST API (HTTPS port 443 - works on Render free tier)
 const sendViaBrevoApi = async ({ to, subject, html, text, cc, bcc, attachments }) => {
-    const api = getApiInstance();
-    const sendSmtpEmail = new brevo.SendSmtpEmail();
-    
-    sendSmtpEmail.sender = { email: DEFAULT_EMAIL, name: DEFAULT_NAME };
-    sendSmtpEmail.to = [{ email: to }];
-    sendSmtpEmail.subject = subject || 'Freight Rates Request';
-    sendSmtpEmail.htmlContent = html || '';
-    sendSmtpEmail.textContent = text || '';
-    sendSmtpEmail.replyTo = { email: DEFAULT_EMAIL, name: DEFAULT_NAME };
-    
-    if (cc?.length) sendSmtpEmail.cc = cc.map(e => ({ email: e }));
-    if (bcc?.length) sendSmtpEmail.bcc = bcc.map(e => ({ email: e }));
-    if (attachments?.length) sendSmtpEmail.attachment = attachments;
+    if (!BREVO_API_KEY) {
+        throw new Error('❌ BREVO_API_KEY not set in environment variables');
+    }
 
-    return api.sendTransacEmail(sendSmtpEmail);
+    const payload = {
+        sender: { email: DEFAULT_EMAIL, name: DEFAULT_NAME },
+        to: [{ email: to }],
+        subject: subject || 'Freight Rates Request',
+        htmlContent: html || '',
+        textContent: text || '',
+        replyTo: { email: DEFAULT_EMAIL, name: DEFAULT_NAME }
+    };
+
+    if (cc?.length) payload.cc = cc.map(e => ({ email: e }));
+    if (bcc?.length) payload.bcc = bcc.map(e => ({ email: e }));
+    if (attachments?.length) payload.attachment = attachments;
+
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+            'api-key': BREVO_API_KEY,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || `Brevo API error: ${response.status}`);
+    }
+
+    return response.json();
 };
 
 // DIRECT SEND - Uses Brevo API

@@ -3,8 +3,7 @@ import logger from '../utils/logger.js';
 import queueService from '../services/queueService.js';
 
 // DEFAULT COMPANY EMAIL - ALL EMAILS WILL BE SENT FROM THIS
-const DEFAULT_EMAIL = 'rates@pasfreight.com';
-const DEFAULT_PASSWORD = process.env.SMTP_PASSWORD; // Brevo SMTP Key from Render env
+const DEFAULT_EMAIL = process.env.SMTP_FROM_EMAIL || 'rates@pasfreight.com';
 
 // Helper function to validate email format
 const isValidEmail = (email) => {
@@ -41,15 +40,36 @@ const cleanMultipleEmails = (emailsString) => {
     return cleanedEmails;
 };
 
-// Create transporter with default email using Brevo SMTP
+// Create transporter from environment variables
 const createTransporter = () => {
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || '587');
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASSWORD;
+
+    // Log configuration (without sensitive data)
+    logger.info('Creating transporter with config:', {
+        host: host || 'MISSING',
+        port: port,
+        user: user || 'MISSING',
+        pass: pass ? 'PRESENT' : 'MISSING'
+    });
+
+    if (!host || !user || !pass) {
+        const missing = [];
+        if (!host) missing.push('SMTP_HOST');
+        if (!user) missing.push('SMTP_USER');
+        if (!pass) missing.push('SMTP_PASSWORD');
+        throw new Error(`❌ Missing SMTP environment variables: ${missing.join(', ')}`);
+    }
+
     return nodemailer.createTransport({
-        host: 'smtp-relay.brevo.com',
-        port: 587,
-        secure: false,
+        host: host,
+        port: port,
+        secure: port === 465,
         auth: {
-            user: 'af64cb001@smtp-brevo.com',  // Brevo SMTP Login (HARDCODED)
-            pass: DEFAULT_PASSWORD, // Brevo SMTP Key from env
+            user: user,
+            pass: pass,
         },
         connectionTimeout: 30000,
         greetingTimeout: 30000,
@@ -61,7 +81,7 @@ const createTransporter = () => {
     });
 };
 
-// Send single email using queue system (USES DEFAULT EMAIL)
+// Send single email using queue system
 export const sendSingleEmail = async (req, res) => {
     try {
         let { to_email, cc_emails, bcc_emails, subject, content } = req.body;
@@ -76,11 +96,11 @@ export const sendSingleEmail = async (req, res) => {
             });
         }
 
-        // Use default email - no need for from_email/from_password from frontend
+        // Use queue service - it will use environment variables for SMTP
         const queueItem = await queueService.addDirectToQueue(
             [cleanedEmail],
-            DEFAULT_EMAIL,
-            DEFAULT_PASSWORD,
+            process.env.SMTP_USER,
+            process.env.SMTP_PASSWORD,
             subject,
             content,
             cc_emails,
@@ -104,7 +124,7 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// DIRECT SEND - Bypasses queue (USES DEFAULT EMAIL)
+// DIRECT SEND - Bypasses queue
 export const sendSingleEmailDirect = async (req, res) => {
     try {
         let { to_email, cc_emails, bcc_emails, subject, content } = req.body;
@@ -123,11 +143,13 @@ export const sendSingleEmailDirect = async (req, res) => {
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
 
-        // Create transporter with default credentials (Brevo)
+        // Create transporter from environment variables
         const transporter = createTransporter();
 
         // Verify connection before sending
+        logger.info('Verifying SMTP connection...');
         await transporter.verify();
+        logger.info('SMTP connection verified successfully');
 
         const mailOptions = {
             from: DEFAULT_EMAIL,
@@ -170,11 +192,13 @@ export const sendSingleEmailDirect = async (req, res) => {
         
         let errorMessage = error.message;
         if (errorMessage.includes('Invalid login') || errorMessage.includes('535')) {
-            errorMessage = '❌ Invalid Brevo credentials! Please check the SMTP Login and Key in Render environment variables.';
+            errorMessage = '❌ Invalid SMTP credentials! Check SMTP_USER and SMTP_PASSWORD in environment variables.';
         } else if (errorMessage.includes('ECONNREFUSED')) {
-            errorMessage = '❌ SMTP connection refused. Please try again later.';
+            errorMessage = `❌ SMTP connection refused to ${process.env.SMTP_HOST}. Check if host is correct.`;
         } else if (errorMessage.includes('timeout')) {
-            errorMessage = '❌ Connection timeout. Please try again later.';
+            errorMessage = `❌ Connection timeout to ${process.env.SMTP_HOST}. Check network/firewall.`;
+        } else if (errorMessage.includes('Missing SMTP')) {
+            errorMessage = '❌ SMTP configuration missing. Set SMTP_HOST, SMTP_USER, and SMTP_PASSWORD in environment variables.';
         }
         
         res.status(500).json({
@@ -184,7 +208,7 @@ export const sendSingleEmailDirect = async (req, res) => {
     }
 };
 
-// Batch send - USING QUEUE SYSTEM (USES DEFAULT EMAIL)
+// Batch send - USING QUEUE SYSTEM
 export const sendBatchEmails = async (req, res) => {
     try {
         const { recipients, cc_emails, bcc_emails, subject, content } = req.body;
@@ -217,8 +241,8 @@ export const sendBatchEmails = async (req, res) => {
             
             const result = await queueService.addDirectToQueue(
                 [recipient.email],
-                DEFAULT_EMAIL,
-                DEFAULT_PASSWORD,
+                process.env.SMTP_USER,
+                process.env.SMTP_PASSWORD,
                 subject,
                 personalizedContent,
                 ccList.join(', '),

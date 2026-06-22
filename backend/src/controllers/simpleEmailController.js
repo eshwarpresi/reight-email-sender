@@ -3,7 +3,7 @@ import queueService from '../services/queueService.js';
 
 const DEFAULT_EMAIL = process.env.SMTP_FROM_EMAIL || 'rates@pasfreight.com';
 const DEFAULT_NAME = process.env.SMTP_FROM_NAME || 'Freight Operations';
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const getBrevoApiKey = () => process.env.BREVO_API_KEY;
 
 const isValidEmail = (email) => {
     const clean = email.replace(/[<>]/g, '').trim();
@@ -23,9 +23,9 @@ const cleanMultipleEmails = (emailsString) => {
         .filter(e => e && isValidEmail(e));
 };
 
-// Send via Brevo REST API (HTTPS port 443 - works on Render free tier)
 const sendViaBrevoApi = async ({ to, subject, html, text, cc, bcc, attachments }) => {
-    if (!BREVO_API_KEY) {
+    const apiKey = getBrevoApiKey();
+    if (!apiKey) {
         throw new Error('❌ BREVO_API_KEY not set in environment variables');
     }
 
@@ -45,7 +45,7 @@ const sendViaBrevoApi = async ({ to, subject, html, text, cc, bcc, attachments }
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
-            'api-key': BREVO_API_KEY,
+            'api-key': apiKey,
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         },
@@ -60,7 +60,6 @@ const sendViaBrevoApi = async ({ to, subject, html, text, cc, bcc, attachments }
     return response.json();
 };
 
-// DIRECT SEND - Uses Brevo API
 export const sendSingleEmailDirect = async (req, res) => {
     try {
         const { to_email, cc_emails, bcc_emails, subject, content } = req.body;
@@ -111,7 +110,6 @@ export const sendSingleEmailDirect = async (req, res) => {
     }
 };
 
-// Queue-based send
 export const sendSingleEmail = async (req, res) => {
     try {
         const { to_email, cc_emails, bcc_emails, subject, content } = req.body;
@@ -124,7 +122,7 @@ export const sendSingleEmail = async (req, res) => {
         const queueItem = await queueService.addDirectToQueue(
             [cleanedEmail],
             DEFAULT_EMAIL,
-            BREVO_API_KEY,
+            getBrevoApiKey(),
             subject,
             content,
             cc_emails,
@@ -145,13 +143,11 @@ export const sendSingleEmail = async (req, res) => {
     }
 };
 
-// Batch send
 export const sendBatchEmails = async (req, res) => {
     try {
         const { recipients, cc_emails, bcc_emails, subject, content } = req.body;
         const ccList = cleanMultipleEmails(cc_emails);
         const bccList = cleanMultipleEmails(bcc_emails);
-
         const validRecipients = [];
         const invalidRecipients = [];
 
@@ -174,7 +170,7 @@ export const sendBatchEmails = async (req, res) => {
             const result = await queueService.addDirectToQueue(
                 [recipient.email],
                 DEFAULT_EMAIL,
-                BREVO_API_KEY,
+                getBrevoApiKey(),
                 subject,
                 personalizedContent,
                 ccList.join(', '),

@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getDatabase } from '../src/database/connection.js';
 import authRoutes from '../src/routes/authRoutes.js';
 import campaignRoutes from '../src/routes/campaignRoutes.js';
@@ -10,14 +12,15 @@ import reportRoutes from '../src/routes/reportRoutes.js';
 import simpleEmailRoutes from '../src/routes/simpleEmailRoutes.js';
 import serverless from 'serverless-http';
 
-dotenv.config();
+// Fix dotenv path for Render
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const app = express();
 
 // Middleware
-app.use(helmet({
-    contentSecurityPolicy: false,
-}));
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
     origin: process.env.CORS_ORIGIN || '*',
     credentials: true,
@@ -27,19 +30,29 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Handle OPTIONS requests
 app.options('*', cors());
 
-// Health check endpoint (before database)
+// Health check
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'healthy', 
         timestamp: new Date().toISOString(),
-        message: 'Backend is running on Vercel'
+        brevo_key_set: !!process.env.BREVO_API_KEY,
+        smtp_host: process.env.SMTP_HOST || 'not set'
     });
 });
 
-// Try to initialize database, but don't fail if it doesn't work
+// Debug env endpoint
+app.get('/api/debug-env', (req, res) => {
+    res.json({
+        BREVO_API_KEY: process.env.BREVO_API_KEY ? 'SET (length: ' + process.env.BREVO_API_KEY.length + ')' : 'NOT SET',
+        SMTP_HOST: process.env.SMTP_HOST || 'NOT SET',
+        SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL || 'NOT SET',
+        NODE_ENV: process.env.NODE_ENV || 'NOT SET',
+        PORT: process.env.PORT || 'NOT SET'
+    });
+});
+
 let dbInitialized = false;
 
 async function initDatabase() {
@@ -54,34 +67,24 @@ async function initDatabase() {
     }
 }
 
-// Initialize database on first request
 app.use(async (req, res, next) => {
-    if (!dbInitialized) {
-        await initDatabase();
-    }
+    if (!dbInitialized) await initDatabase();
     next();
 });
 
-// Routes - IMPORTANT: Import queueService ONLY when needed, not at startup
 app.use('/api/auth', authRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api', simpleEmailRoutes);
 
-// 404 handler
 app.use('/api/*', (req, res) => {
     res.status(404).json({ success: false, message: 'API endpoint not found' });
 });
 
-// Error handler
 app.use((err, req, res, next) => {
     console.error('❌ Server error:', err);
-    res.status(500).json({ 
-        success: false, 
-        message: err.message || 'Internal server error' 
-    });
+    res.status(500).json({ success: false, message: err.message || 'Internal server error' });
 });
 
-// Export handler for Vercel - ensure it's a function
 export const handler = serverless(app);

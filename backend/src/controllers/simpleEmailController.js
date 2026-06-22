@@ -1,6 +1,6 @@
 import logger from '../utils/logger.js';
 import queueService from '../services/queueService.js';
-import brevo from '@getbrevo/brevo';
+import * as brevo from '@getbrevo/brevo';
 
 const DEFAULT_EMAIL = process.env.SMTP_FROM_EMAIL || 'rates@pasfreight.com';
 const DEFAULT_NAME = process.env.SMTP_FROM_NAME || 'Freight Operations';

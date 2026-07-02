@@ -6,6 +6,10 @@ import { loginLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
+// Google OAuth routes (public)
+router.get('/google', authController.googleLogin);
+router.get('/google/callback', authController.googleCallback);
+
 // Public routes
 router.post('/register', validateRegister, authController.register);
 router.post('/login', loginLimiter, validateLogin, authController.login);

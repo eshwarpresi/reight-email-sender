@@ -27,12 +27,10 @@ import {
     Lock as LockIcon,
     Person as PersonIcon,
     Google as GoogleIcon,
-    GitHub as GitHubIcon,
-    ArrowForward as ArrowForwardIcon,
-    CheckCircleOutline as CheckCircleOutlineIcon,
 } from '@mui/icons-material';
-import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export default function Login() {
     const theme = useTheme();
@@ -127,7 +125,6 @@ export default function Login() {
             return;
         }
         setLoading(true);
-        // Simulate password reset API call
         setTimeout(() => {
             setLoading(false);
             setResetSent(true);
@@ -136,8 +133,8 @@ export default function Login() {
         }, 1500);
     };
 
-    const handleSocialLogin = (provider) => {
-        toast.info(`🔜 ${provider} login coming soon! Stay tuned.`);
+    const handleGoogleLogin = () => {
+        window.location.href = `${API_URL}/auth/google`;
     };
 
     return (
@@ -368,33 +365,18 @@ export default function Login() {
                                                 fullWidth
                                                 variant="outlined"
                                                 startIcon={<GoogleIcon />}
-                                                onClick={() => handleSocialLogin('Google')}
+                                                onClick={handleGoogleLogin}
                                                 sx={{ 
                                                     borderRadius: 2,
                                                     borderColor: '#ddd',
+                                                    color: '#333',
                                                     '&:hover': {
                                                         borderColor: '#667eea',
                                                         backgroundColor: 'rgba(102, 126, 234, 0.05)',
                                                     },
                                                 }}
                                             >
-                                                Google
-                                            </Button>
-                                            <Button
-                                                fullWidth
-                                                variant="outlined"
-                                                startIcon={<GitHubIcon />}
-                                                onClick={() => handleSocialLogin('GitHub')}
-                                                sx={{ 
-                                                    borderRadius: 2,
-                                                    borderColor: '#ddd',
-                                                    '&:hover': {
-                                                        borderColor: '#667eea',
-                                                        backgroundColor: 'rgba(102, 126, 234, 0.05)',
-                                                    },
-                                                }}
-                                            >
-                                                GitHub
+                                                Sign in with Google
                                             </Button>
                                         </Stack>
                                     </form>
